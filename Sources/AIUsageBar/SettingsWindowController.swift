@@ -15,7 +15,12 @@ final class SettingsWindowController: NSWindowController {
     private let codexCheck = NSButton(checkboxWithTitle: "Codex", target: nil, action: nil)
     private let litellmCheck = NSButton(checkboxWithTitle: "LiteLLM 网关", target: nil, action: nil)
     private let baseURLField = NSTextField()
+    // API key 的密文/明文是两个字段切着用（NSSecureTextField 自己变不了明文），
+    // 值以当前可见的那个为准，切换时互相同步。
     private let apiKeyField = NSSecureTextField()
+    private let apiKeyPlainField = NSTextField()
+    private let apiKeyToggle = NSButton()
+    private var apiKeyVisible = false
     private let pollField = NSTextField()
     private let pollStepper = NSStepper()
     private let prefixField = NSTextField()
@@ -68,6 +73,15 @@ final class SettingsWindowController: NSWindowController {
     private func buildContent() -> NSView {
         baseURLField.placeholderString = "https://gateway.example.com"
         apiKeyField.placeholderString = "sk-…"
+        apiKeyPlainField.placeholderString = "sk-…"
+        apiKeyPlainField.isHidden = true
+        apiKeyToggle.bezelStyle = .inline
+        apiKeyToggle.isBordered = false
+        apiKeyToggle.image = NSImage(systemSymbolName: "eye",
+                                     accessibilityDescription: "显示 API Key")
+        apiKeyToggle.target = self
+        apiKeyToggle.action = #selector(apiKeyToggleClicked)
+        apiKeyToggle.toolTip = "显示/隐藏明文"
         prefixField.placeholderString = "AI"
 
         let pollFormatter = NumberFormatter()
@@ -130,10 +144,14 @@ final class SettingsWindowController: NSWindowController {
         sourceStack.setCustomSpacing(4, after: claudeCheck)
         sourceStack.setCustomSpacing(6, after: litellmCheck)
 
+        let apiKeyRow = NSStackView(views: [apiKeyField, apiKeyPlainField, apiKeyToggle])
+        apiKeyRow.orientation = .horizontal
+        apiKeyRow.spacing = 6
+
         let grid = NSGridView(views: [
             [gridLabel("显示来源"), sourceStack],
             [gridLabel("网关地址"), baseURLField],
-            [gridLabel("网关 API Key"), apiKeyField],
+            [gridLabel("网关 API Key"), apiKeyRow],
             [gridLabel("轮询间隔"), pollRow],
             [gridLabel("菜单栏前缀"), prefixField],
         ])
@@ -143,6 +161,7 @@ final class SettingsWindowController: NSWindowController {
         grid.columnSpacing = 12
         baseURLField.widthAnchor.constraint(equalToConstant: 280).isActive = true
         apiKeyField.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        apiKeyPlainField.widthAnchor.constraint(equalToConstant: 280).isActive = true
         prefixField.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
         let reveal = NSButton(title: "在 Finder 中显示配置文件",
@@ -209,15 +228,16 @@ final class SettingsWindowController: NSWindowController {
         let litellm = settings.forProvider("litellm")
         litellmCheck.state = litellm.enabled ? .on : .off
         baseURLField.stringValue = litellm.string("baseURL") ?? ""
-        apiKeyField.stringValue = litellm.string("apiKey") ?? ""
+        apiKeyValue = litellm.string("apiKey") ?? ""
+        setApiKeyVisible(false)             // 每次打开都从密文开始
 
         // 配置文件里没写但实际生效着（环境变量 / ~/.zshrc 捞到的）——把生效值回填
         // 进字段并标注来源，不然面板一片空白、网关却在正常出数，谁看谁迷惑。
         litellmNoteRow.isHidden = true
-        if baseURLField.stringValue.isEmpty, apiKeyField.stringValue.isEmpty,
+        if baseURLField.stringValue.isEmpty, apiKeyValue.isEmpty,
            let cfg = LiteLLMProvider.resolveConfig(), cfg.source != .configFile {
             baseURLField.stringValue = cfg.baseURL
-            apiKeyField.stringValue = cfg.apiKey
+            apiKeyValue = cfg.apiKey
             litellmNote.stringValue = "当前值读自 \(cfg.source.label)；点保存会写进配置文件（此后以配置文件为准）"
             litellmNoteRow.isHidden = false
         }
@@ -275,6 +295,37 @@ final class SettingsWindowController: NSWindowController {
         let on = litellmCheck.state == .on
         baseURLField.isEnabled = on
         apiKeyField.isEnabled = on
+        apiKeyPlainField.isEnabled = on
+        apiKeyToggle.isEnabled = on
+    }
+
+    /// API key 的当前值，读写都走可见的那个字段并保持两边同步。
+    private var apiKeyValue: String {
+        get { (apiKeyVisible ? apiKeyPlainField : apiKeyField).stringValue }
+        set {
+            apiKeyField.stringValue = newValue
+            apiKeyPlainField.stringValue = newValue
+        }
+    }
+
+    @objc private func apiKeyToggleClicked() {
+        setApiKeyVisible(!apiKeyVisible)
+    }
+
+    private func setApiKeyVisible(_ visible: Bool) {
+        let current = apiKeyValue          // 先取当前值再切，编辑一半的内容不能丢
+        let wasEditingKey = apiKeyField.currentEditor() != nil
+            || apiKeyPlainField.currentEditor() != nil
+        apiKeyVisible = visible
+        apiKeyValue = current
+        apiKeyField.isHidden = visible
+        apiKeyPlainField.isHidden = !visible
+        apiKeyToggle.image = NSImage(systemSymbolName: visible ? "eye.slash" : "eye",
+                                     accessibilityDescription: visible ? "隐藏 API Key" : "显示 API Key")
+        // 正在编辑 key 时焦点跟着切过去，光标别丢在已隐藏的字段里
+        if wasEditingKey {
+            window?.makeFirstResponder(visible ? apiKeyPlainField : apiKeyField)
+        }
     }
 
     @objc private func pollStepped() {
@@ -452,7 +503,7 @@ final class SettingsWindowController: NSWindowController {
                 ],
                 providerOptions: ["litellm": [
                     "baseURL": baseURLField.stringValue.trimmingCharacters(in: .whitespaces),
-                    "apiKey": apiKeyField.stringValue.trimmingCharacters(in: .whitespaces),
+                    "apiKey": apiKeyValue.trimmingCharacters(in: .whitespaces),
                 ]],
                 pollMinutes: max(5, pollField.integerValue),
                 menuBarPrefix: prefix.isEmpty ? Settings.defaults.menuBarPrefix : prefix)
