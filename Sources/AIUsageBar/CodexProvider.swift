@@ -22,6 +22,11 @@ struct CodexProvider: UsageProvider {
     private static let cacheFile = home.appendingPathComponent(".cache/ai-usage-bar/codex.json")
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
+    /// 设置面板显示登录状态用。判断标准和 readAccounts 一致：auth.json 存在即算。
+    static var isLoggedIn: Bool {
+        FileManager.default.fileExists(atPath: authFile.path)
+    }
+
     // MARK: - UsageProvider
 
     func readAccounts() -> [Account] {

@@ -24,20 +24,33 @@ struct LiteLLMProvider: UsageProvider {
     struct Config {
         let baseURL: String
         let apiKey: String
+        /// 值是从哪读到的 —— 设置面板要据此提示用户。
+        let source: Source
+
+        enum Source {
+            case configFile, environment, zshrc
+            var label: String {
+                switch self {
+                case .configFile: return "配置文件"
+                case .environment: return "环境变量"
+                case .zshrc: return "~/.zshrc"
+                }
+            }
+        }
     }
 
     static func resolveConfig() -> Config? {
         // 1) 配置文件优先 —— 这是给普通用户的正经入口
         let settings = Settings.shared.forProvider("litellm")
         if let base = settings.string("baseURL"), let key = settings.string("apiKey") {
-            return Config(baseURL: base, apiKey: key)
+            return Config(baseURL: base, apiKey: key, source: .configFile)
         }
 
         // 2) 环境变量
         let env = ProcessInfo.processInfo.environment
         if let base = env["LITELLM_BASE_URL"], let key = env["LITELLM_API_KEY"],
            !base.isEmpty, !key.isEmpty {
-            return Config(baseURL: base, apiKey: key)
+            return Config(baseURL: base, apiKey: key, source: .environment)
         }
 
         let zshrc = FileManager.default.homeDirectoryForCurrentUser
@@ -60,7 +73,7 @@ struct LiteLLMProvider: UsageProvider {
         guard let base = found["LITELLM_BASE_URL"], let key = found["LITELLM_API_KEY"] else {
             return nil
         }
-        return Config(baseURL: base, apiKey: key)
+        return Config(baseURL: base, apiKey: key, source: .zshrc)
     }
 
     // MARK: - UsageProvider

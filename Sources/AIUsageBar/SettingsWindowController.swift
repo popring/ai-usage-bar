@@ -21,6 +21,11 @@ final class SettingsWindowController: NSWindowController {
     private let prefixField = NSTextField()
     private let addTeamStatus = NSTextField(labelWithString: "")
     private var addTeamStatusRow: NSView!
+    private let teamsStack = NSStackView()
+    private var teamDirs: [URL] = []
+    private let codexStatus = NSTextField(labelWithString: "")
+    private let litellmNote = NSTextField(labelWithString: "")
+    private var litellmNoteRow: NSView!
     private var teamPollTimer: Timer?
     private var hasShownOnce = false
 
@@ -93,18 +98,37 @@ final class SettingsWindowController: NSWindowController {
         addTeamStatus.maximumNumberOfLines = 6   // alias 那行要完整可复制，别截断
         addTeamStatus.preferredMaxLayoutWidth = 260
 
-        // 「显示来源」整块收进一个竖向 stack：add-team 按钮和状态行缩进，
+        // 已发现的 team 列表（populate 时重建）。
+        teamsStack.orientation = .vertical
+        teamsStack.alignment = .leading
+        teamsStack.spacing = 3
+
+        // Codex 是零配置的（自动读 ~/.codex/auth.json），面板能给的只有状态反馈。
+        codexStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let codexRow = NSStackView(views: [codexCheck, codexStatus])
+        codexRow.orientation = .horizontal
+        codexRow.spacing = 8
+
+        // 网关的值可能来自环境变量 / ~/.zshrc（Finder 启动的 app 读不到 shell 环境，
+        // 但 provider 会去 ~/.zshrc 捞）。populate 会把生效值回填并在这里标注来源。
+        litellmNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        litellmNote.textColor = .secondaryLabelColor
+        litellmNoteRow = indented(litellmNote)
+        litellmNoteRow.isHidden = true
+
+        // 「显示来源」整块收进一个竖向 stack：team 列表、add-team 按钮和状态行缩进，
         // 表示从属于 Claude Code；状态行空着就整行隐藏，不留空隙。
         addTeamStatusRow = indented(addTeamStatus)
         addTeamStatusRow.isHidden = true
         let sourceStack = NSStackView(views: [
-            claudeCheck, indented(addTeam), addTeamStatusRow,
-            codexCheck, litellmCheck,
+            claudeCheck, indented(teamsStack), indented(addTeam), addTeamStatusRow,
+            codexRow, litellmCheck, litellmNoteRow,
         ])
         sourceStack.orientation = .vertical
         sourceStack.alignment = .leading
         sourceStack.spacing = 8
         sourceStack.setCustomSpacing(4, after: claudeCheck)
+        sourceStack.setCustomSpacing(6, after: litellmCheck)
 
         let grid = NSGridView(views: [
             [gridLabel("显示来源"), sourceStack],
@@ -177,15 +201,72 @@ final class SettingsWindowController: NSWindowController {
         claudeCheck.state = settings.forProvider("claude-code").enabled ? .on : .off
         codexCheck.state = settings.forProvider("codex").enabled ? .on : .off
 
+        rebuildTeamList()
+        let codexOn = CodexProvider.isLoggedIn
+        codexStatus.stringValue = codexOn ? "已登录" : "未登录（跑一次 codex 登录即可）"
+        codexStatus.textColor = codexOn ? .secondaryLabelColor : .tertiaryLabelColor
+
         let litellm = settings.forProvider("litellm")
         litellmCheck.state = litellm.enabled ? .on : .off
         baseURLField.stringValue = litellm.string("baseURL") ?? ""
         apiKeyField.stringValue = litellm.string("apiKey") ?? ""
 
+        // 配置文件里没写但实际生效着（环境变量 / ~/.zshrc 捞到的）——把生效值回填
+        // 进字段并标注来源，不然面板一片空白、网关却在正常出数，谁看谁迷惑。
+        litellmNoteRow.isHidden = true
+        if baseURLField.stringValue.isEmpty, apiKeyField.stringValue.isEmpty,
+           let cfg = LiteLLMProvider.resolveConfig(), cfg.source != .configFile {
+            baseURLField.stringValue = cfg.baseURL
+            apiKeyField.stringValue = cfg.apiKey
+            litellmNote.stringValue = "当前值读自 \(cfg.source.label)；点保存会写进配置文件（此后以配置文件为准）"
+            litellmNoteRow.isHidden = false
+        }
+
         pollField.integerValue = max(5, settings.pollMinutes)
         pollStepper.integerValue = pollField.integerValue
         prefixField.stringValue = settings.menuBarPrefix
         litellmToggled()
+    }
+
+    /// 重建已发现的 Claude team 列表。数据源和菜单一致：~/.claude 和 ~/.claude-*。
+    private func rebuildTeamList() {
+        teamsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        teamDirs = UsageReader.configDirs()
+        for (index, dir) in teamDirs.enumerated() {
+            teamsStack.addArrangedSubview(teamRow(dir, index: index))
+        }
+        teamsStack.isHidden = teamDirs.isEmpty
+        fitWindow()
+    }
+
+    private func teamRow(_ dir: URL, index: Int) -> NSView {
+        let account = UsageReader.read(dir, providerID: "claude-code")
+
+        let isDefault = dir.lastPathComponent == ".claude"
+        let name = NSTextField(labelWithString: dir.lastPathComponent + (isDefault ? "（默认）" : ""))
+        name.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        if isDefault { name.toolTip = "claude 命令默认用的目录，跟着你在终端里切 team 而变" }
+
+        let detailText = account.isLoggedIn
+            ? [account.org, account.email].compactMap { $0 }.joined(separator: " · ")
+            : "未登录"
+        let detail = smallLabel(detailText)
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        if !account.isLoggedIn { detail.textColor = .tertiaryLabelColor }
+
+        // 每行一个「⋯」操作菜单。用 tag 关联 teamDirs 下标。
+        let action = NSButton(title: "⋯", target: self, action: #selector(teamActionsClicked(_:)))
+        action.bezelStyle = .inline
+        action.controlSize = .small
+        action.tag = index
+        action.toolTip = "复制 alias、在 Finder 中显示、移除"
+
+        let row = NSStackView(views: [name, detail, action])
+        row.orientation = .horizontal
+        row.spacing = 6
+        row.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
+        return row
     }
 
     // MARK: - 动作
@@ -271,10 +352,79 @@ final class SettingsWindowController: NSWindowController {
                 ✓ 已添加 \(account.org ?? name)。想在终端里日常用它，把这行放进 shell 配置：
                 alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/.claude-\(name) claude'
                 """)
+                self.rebuildTeamList()
                 self.onTeamAdded?()
             } else if attempts <= 0 {
                 timer.invalidate()
                 self.setTeamStatus("没等到登录。之后登录完成也会自动出现在菜单里，不影响。")
+            }
+        }
+    }
+
+    // MARK: - team 行操作
+
+    @objc private func teamActionsClicked(_ sender: NSButton) {
+        guard teamDirs.indices.contains(sender.tag) else { return }
+        let dir = teamDirs[sender.tag]
+        let isDefault = dir.lastPathComponent == ".claude"
+
+        let menu = NSMenu()
+        func item(_ title: String, _ action: Selector, enabled: Bool = true) {
+            let i = NSMenuItem(title: title, action: enabled ? action : nil, keyEquivalent: "")
+            i.target = enabled ? self : nil
+            i.representedObject = dir
+            menu.addItem(i)
+        }
+        // 默认目录就是裸 `claude`，不需要 alias；也不允许从这里移除。
+        item("复制 alias 命令", #selector(copyTeamAlias(_:)), enabled: !isDefault)
+        item("在 Finder 中显示", #selector(revealTeam(_:)))
+        menu.addItem(.separator())
+        item(isDefault ? "移除（默认目录不可移除）" : "移除…",
+             #selector(removeTeam(_:)), enabled: !isDefault)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func copyTeamAlias(_ sender: NSMenuItem) {
+        guard let dir = sender.representedObject as? URL else { return }
+        let name = dir.lastPathComponent.replacingOccurrences(of: ".claude-", with: "")
+        let alias = "alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/\(dir.lastPathComponent) claude'"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(alias, forType: .string)
+        setTeamStatus("已复制：\(alias)")
+    }
+
+    @objc private func revealTeam(_ sender: NSMenuItem) {
+        guard let dir = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([dir])
+    }
+
+    /// 移除 = 整个配置目录扔进废纸篓（可从废纸篓恢复）。登录态跟着目录走，
+    /// 移除后想再看这个 team 得重新登录。
+    @objc private func removeTeam(_ sender: NSMenuItem) {
+        guard let dir = sender.representedObject as? URL, let window else { return }
+        let account = UsageReader.read(dir, providerID: "claude-code")
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "移除 \(account.org ?? dir.lastPathComponent)？"
+        alert.informativeText = """
+        会把 \(dir.path) 移到废纸篓（含这个 team 的登录状态和本地会话记录）。
+        之后想再显示它需要重新登录。如有终端正用这个目录跑 claude，会受影响。
+        """
+        alert.addButton(withTitle: "移到废纸篓")
+        alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            NSWorkspace.shared.recycle([dir]) { _, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let error {
+                        self.setTeamStatus("移除失败：\(error.localizedDescription)")
+                        return
+                    }
+                    self.setTeamStatus("已移除 \(dir.lastPathComponent)（在废纸篓里，可恢复）")
+                    self.rebuildTeamList()
+                    self.onTeamAdded?()      // 让菜单栏那边重读账号列表
+                }
             }
         }
     }
