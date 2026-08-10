@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController {
     private let pollStepper = NSStepper()
     private let prefixField = NSTextField()
     private let addTeamStatus = NSTextField(labelWithString: "")
+    private var addTeamStatusRow: NSView!
     private var teamPollTimer: Timer?
     private var hasShownOnce = false
 
@@ -41,11 +42,20 @@ final class SettingsWindowController: NSWindowController {
     func show() {
         populate()
         NSApp.activate(ignoringOtherApps: true)
+        fitWindow()
         if !hasShownOnce {
             window?.center()
             hasShownOnce = true
         }
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// 窗口是 contentRect: .zero 建的，尺寸全靠 AutoLayout 撑，实际会比内容窄一圈——
+    /// 表现为输入框顶到右边缘、焦点环被裁。每次内容变化后按 fittingSize 定一次尺寸。
+    private func fitWindow() {
+        guard let window, let content = window.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        window.setContentSize(content.fittingSize)
     }
 
     // MARK: - 布局
@@ -80,20 +90,30 @@ final class SettingsWindowController: NSWindowController {
         addTeamStatus.textColor = .secondaryLabelColor
         addTeamStatus.isSelectable = true            // alias 提示要能复制
         addTeamStatus.lineBreakMode = .byWordWrapping
-        addTeamStatus.maximumNumberOfLines = 4
-        addTeamStatus.preferredMaxLayoutWidth = 280
+        addTeamStatus.maximumNumberOfLines = 6   // alias 那行要完整可复制，别截断
+        addTeamStatus.preferredMaxLayoutWidth = 260
+
+        // 「显示来源」整块收进一个竖向 stack：add-team 按钮和状态行缩进，
+        // 表示从属于 Claude Code；状态行空着就整行隐藏，不留空隙。
+        addTeamStatusRow = indented(addTeamStatus)
+        addTeamStatusRow.isHidden = true
+        let sourceStack = NSStackView(views: [
+            claudeCheck, indented(addTeam), addTeamStatusRow,
+            codexCheck, litellmCheck,
+        ])
+        sourceStack.orientation = .vertical
+        sourceStack.alignment = .leading
+        sourceStack.spacing = 8
+        sourceStack.setCustomSpacing(4, after: claudeCheck)
 
         let grid = NSGridView(views: [
-            [gridLabel("显示来源"), claudeCheck],
-            [NSGridCell.emptyContentView, addTeam],
-            [NSGridCell.emptyContentView, addTeamStatus],
-            [NSGridCell.emptyContentView, codexCheck],
-            [NSGridCell.emptyContentView, litellmCheck],
+            [gridLabel("显示来源"), sourceStack],
             [gridLabel("网关地址"), baseURLField],
             [gridLabel("网关 API Key"), apiKeyField],
             [gridLabel("轮询间隔"), pollRow],
             [gridLabel("菜单栏前缀"), prefixField],
         ])
+        grid.rowAlignment = .firstBaseline
         grid.column(at: 0).xPlacement = .trailing
         grid.rowSpacing = 10
         grid.columnSpacing = 12
@@ -132,6 +152,21 @@ final class SettingsWindowController: NSWindowController {
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
         return label
+    }
+
+    /// 包一层左缩进，表示该控件从属于上一行的勾选项（18pt ≈ 勾选框图标宽度）。
+    private func indented(_ view: NSView) -> NSStackView {
+        let row = NSStackView(views: [view])
+        row.orientation = .horizontal
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 18, bottom: 0, right: 0)
+        return row
+    }
+
+    /// 状态行有内容才占位，空着时整行隐藏。
+    private func setTeamStatus(_ text: String) {
+        addTeamStatus.stringValue = text
+        addTeamStatusRow.isHidden = text.isEmpty
+        fitWindow()   // 状态行显隐会改变内容高度，窗口得跟着变，否则文案被裁
     }
 
     // MARK: - 数据
@@ -187,13 +222,13 @@ final class SettingsWindowController: NSWindowController {
 
     private func startTeamLogin(_ name: String) {
         guard name.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
-            addTeamStatus.stringValue = "名字只能用字母、数字、- 和 _"
+            setTeamStatus("名字只能用字母、数字、- 和 _")
             return
         }
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude-\(name)")
         if UsageReader.read(dir, providerID: "claude-code").isLoggedIn {
-            addTeamStatus.stringValue = "~/.claude-\(name) 已存在且已登录，直接就能看"
+            setTeamStatus("~/.claude-\(name) 已存在且已登录，直接就能看")
             return
         }
 
@@ -215,11 +250,11 @@ final class SettingsWindowController: NSWindowController {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
         } catch {
-            addTeamStatus.stringValue = "准备登录脚本失败：\(error.localizedDescription)"
+            setTeamStatus("准备登录脚本失败：\(error.localizedDescription)")
             return
         }
         NSWorkspace.shared.open(scriptURL)
-        addTeamStatus.stringValue = "已打开终端，等待 ~/.claude-\(name) 登录…"
+        setTeamStatus("已打开终端，等待 ~/.claude-\(name) 登录…")
         pollForLogin(name: name, dir: dir)
     }
 
@@ -232,14 +267,14 @@ final class SettingsWindowController: NSWindowController {
             let account = UsageReader.read(dir, providerID: "claude-code")
             if account.isLoggedIn {
                 timer.invalidate()
-                self.addTeamStatus.stringValue = """
+                self.setTeamStatus("""
                 ✓ 已添加 \(account.org ?? name)。想在终端里日常用它，把这行放进 shell 配置：
                 alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/.claude-\(name) claude'
-                """
+                """)
                 self.onTeamAdded?()
             } else if attempts <= 0 {
                 timer.invalidate()
-                self.addTeamStatus.stringValue = "没等到登录。之后登录完成也会自动出现在菜单里，不影响。"
+                self.setTeamStatus("没等到登录。之后登录完成也会自动出现在菜单里，不影响。")
             }
         }
     }
