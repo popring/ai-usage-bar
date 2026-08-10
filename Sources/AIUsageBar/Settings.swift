@@ -23,8 +23,14 @@ struct Settings {
     var pollMinutes: Int
     var menuBarPrefix: String
 
-    static let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/ai-usage-bar/config.json")
+    /// 尊重 XDG_CONFIG_HOME（默认 ~/.config）。注意 `homeDirectoryForCurrentUser`
+    /// 不认 $HOME 环境变量，想在测试里隔离配置只能靠 XDG_CONFIG_HOME。
+    static let path: URL = {
+        let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config")
+        return base.appendingPathComponent("ai-usage-bar/config.json")
+    }()
 
     // MARK: - 加载
 
@@ -69,6 +75,44 @@ struct Settings {
     }
 
     static let defaults = Settings(providers: [:], pollMinutes: 6, menuBarPrefix: "AI")
+
+    // MARK: - 保存（设置面板用）
+
+    /// 把面板里的值合并写回 config.json，写完立即 reload。
+    ///
+    /// 合并而不是整个重写：用户手写的 `_说明`、没被面板管理的字段都保留。
+    static func save(providerEnabled: [String: Bool],
+                     providerOptions: [String: [String: String]],
+                     pollMinutes: Int,
+                     menuBarPrefix: String) throws {
+        var root = (try? Data(contentsOf: path))
+            .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
+
+        // 下限 5：/usage 大约 5 分钟才真的重新取数，比这更密纯属白跑。
+        root["pollMinutes"] = max(5, pollMinutes)
+        root["menuBarPrefix"] = menuBarPrefix
+
+        var providers = root["providers"] as? [String: Any] ?? [:]
+        for (id, enabled) in providerEnabled {
+            var p = providers[id] as? [String: Any] ?? [:]
+            p["enabled"] = enabled
+            for (key, value) in providerOptions[id] ?? [:] { p[key] = value }
+            providers[id] = p
+        }
+        root["providers"] = providers
+
+        let data = try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try FileManager.default.createDirectory(
+            at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: path, options: .atomic)
+        // 原子写会生成新文件，权限得重新收一次。
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: path.path)
+
+        reload()
+    }
 
     /// 某个来源的配置；没写过就按「启用、无选项」处理，保证开箱即用。
     func forProvider(_ id: String) -> ProviderSettings {

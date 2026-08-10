@@ -10,6 +10,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var isRefreshing = false
     private var lastRefreshNote: String?
 
+    private lazy var settingsController: SettingsWindowController = {
+        let controller = SettingsWindowController()
+        controller.onSave = { [weak self] in self?.applyConfigChange() }
+        return controller
+    }()
+
     override init() {
         super.init()
         menu.delegate = self
@@ -67,24 +73,35 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     // MARK: - 菜单栏标题
 
-    /// 显示所有账号里最紧张的那个窗口。看一眼就知道要不要担心。
+    /// 固定了某个账号就存它的 key；nil = 自动（显示最紧张的）。
+    ///
+    /// 场景：一个 team 用到上限后你切去别的 team 干活，「最紧张」永远是那个
+    /// 满了的，标题就卡在 100% 没信息量了。点菜单里的账号名固定住当前在用的。
+    private var pinnedKey: String? {
+        get { UserDefaults.standard.string(forKey: "pinnedAccountKey") }
+        set { UserDefaults.standard.set(newValue, forKey: "pinnedAccountKey") }
+    }
+
+    /// 默认显示所有账号里最紧张的那个窗口；固定了账号就只看它。
     private func updateTitle() {
-        let worst = visibleAccounts
-            .compactMap(\.tightestWindow)
-            .max { $0.percent < $1.percent }
+        // 固定的账号可能已退出登录或被配置关掉，找不到就退回自动。
+        let pinned = visibleAccounts.first { $0.key == pinnedKey }
+        let worst = pinned.map { [$0] } ?? visibleAccounts
+        let window = worst.compactMap(\.tightestWindow).max { $0.percent < $1.percent }
+        statusItem.button?.toolTip = pinned.map { "已固定：\($0.org ?? $0.label)" }
 
         let prefix = Settings.shared.menuBarPrefix
         let text: String
         if isRefreshing {
             text = "\(prefix) …"
-        } else if let worst {
-            text = "\(prefix) \(Int(worst.percent.rounded()))%"
+        } else if let window {
+            text = "\(prefix) \(Int(window.percent.rounded()))%"
         } else {
             text = "\(prefix) —"
         }
 
         let color: NSColor = {
-            guard let p = worst?.percent else { return .secondaryLabelColor }
+            guard let p = window?.percent else { return .secondaryLabelColor }
             if p >= 90 { return .systemRed }
             if p >= 70 { return .systemOrange }
             return .labelColor
@@ -163,17 +180,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 没有设置面板，配置靠编辑 JSON。至少让人能从菜单找到那个文件，
-        // 以及改完不用重启。
-        let openConfig = NSMenuItem(title: "打开配置文件…",
-                                    action: #selector(openConfigClicked), keyEquivalent: ",")
-        openConfig.target = self
-        openConfig.toolTip = Settings.path.path
-        menu.addItem(openConfig)
+        let settingsItem = NSMenuItem(title: "设置…",
+                                      action: #selector(settingsClicked), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
+        // 手改 JSON 的路径依然保留（面板只覆盖常用项），所以重载入口不能少。
         let reloadItem = NSMenuItem(title: "重新加载配置",
                                     action: #selector(reloadConfigClicked), keyEquivalent: "l")
         reloadItem.target = self
+        reloadItem.toolTip = Settings.path.path
         menu.addItem(reloadItem)
 
         menu.addItem(.separator())
@@ -189,7 +205,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if let extra = account.extraUsage, extra.hasBuffer {
             title += String(format: "   $%.2f / $%.0f", extra.used, extra.limit)
         }
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        // 点账号名 = 固定/取消固定到菜单栏（✓ 标在固定的那个上）。
+        let header = NSMenuItem(title: title, action: #selector(pinClicked(_:)),
+                                keyEquivalent: "")
+        header.target = self
+        header.representedObject = account.key
+        header.state = account.key == pinnedKey ? .on : .off
+        header.toolTip = "点击后菜单栏只显示这个账号；再点一次恢复自动"
         header.attributedTitle = NSAttributedString(
             string: title,
             attributes: [
@@ -246,16 +268,24 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func refreshClicked() { refresh() }
 
-    /// 用系统默认应用打开 config.json。文件不存在就先写一份模板 ——
-    /// 否则用户点了没反应，会以为坏了。
-    @objc private func openConfigClicked() {
-        Settings.writeTemplateIfMissing()
-        NSWorkspace.shared.open(Settings.path)
+    @objc private func pinClicked(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        pinnedKey = pinnedKey == key ? nil : key
+        updateTitle()
+    }
+
+    @objc private func settingsClicked() {
+        settingsController.show()
     }
 
     /// 改完配置不用重启。来源开关、轮询间隔、菜单栏前缀都会立刻生效。
     @objc private func reloadConfigClicked() {
         Settings.reload()
+        applyConfigChange()
+    }
+
+    /// 配置变了（面板保存 / 手动重载）之后的统一善后。
+    private func applyConfigChange() {
         restartTimer()
         lastRefreshNote = nil
         refresh()
