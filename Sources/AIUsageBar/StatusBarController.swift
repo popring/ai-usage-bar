@@ -10,9 +10,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var isRefreshing = false
     private var lastRefreshNote: String?
 
-    /// 轮询间隔。/usage 大约 5 分钟才真的重新取数，比这更密是白跑，所以取 6 分钟。
-    private let pollInterval: TimeInterval = 6 * 60
-
     override init() {
         super.init()
         menu.delegate = self
@@ -22,8 +19,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
         reload()
         refresh()
+        restartTimer()
+    }
 
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+    /// 轮询间隔来自配置，重新加载配置后要重建定时器。
+    /// 下限 5 分钟：/usage 大约 5 分钟才真的重新取数，比这更密纯属白跑。
+    private func restartTimer() {
+        timer?.invalidate()
+        let minutes = max(5, Settings.shared.pollMinutes)
+        timer = Timer.scheduledTimer(withTimeInterval: Double(minutes) * 60,
+                                     repeats: true) { [weak self] _ in
             self?.refresh()
         }
     }
@@ -156,6 +161,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
 
+        menu.addItem(.separator())
+
+        // 没有设置面板，配置靠编辑 JSON。至少让人能从菜单找到那个文件，
+        // 以及改完不用重启。
+        let openConfig = NSMenuItem(title: "打开配置文件…",
+                                    action: #selector(openConfigClicked), keyEquivalent: ",")
+        openConfig.target = self
+        openConfig.toolTip = Settings.path.path
+        menu.addItem(openConfig)
+
+        let reloadItem = NSMenuItem(title: "重新加载配置",
+                                    action: #selector(reloadConfigClicked), keyEquivalent: "l")
+        reloadItem.target = self
+        menu.addItem(reloadItem)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "退出", action: #selector(quitClicked), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -223,6 +245,21 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     // MARK: - 动作
 
     @objc private func refreshClicked() { refresh() }
+
+    /// 用系统默认应用打开 config.json。文件不存在就先写一份模板 ——
+    /// 否则用户点了没反应，会以为坏了。
+    @objc private func openConfigClicked() {
+        Settings.writeTemplateIfMissing()
+        NSWorkspace.shared.open(Settings.path)
+    }
+
+    /// 改完配置不用重启。来源开关、轮询间隔、菜单栏前缀都会立刻生效。
+    @objc private func reloadConfigClicked() {
+        Settings.reload()
+        restartTimer()
+        lastRefreshNote = nil
+        refresh()
+    }
 
     @objc private func quitClicked() { NSApp.terminate(nil) }
 }

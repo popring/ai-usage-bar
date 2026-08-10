@@ -42,8 +42,11 @@ enum ProviderRegistry {
     ]
 
     /// 配置里启用了的来源。用户可以在 config.json 里关掉不想看的。
-    static let all: [UsageProvider] = registered.filter {
-        Settings.shared.forProvider($0.id).enabled
+    ///
+    /// 每次都重算（而不是 `static let`）—— 否则「重新加载配置」改不动来源开关，
+    /// 得重启应用才生效。来源就个位数，这点开销无所谓。
+    static var all: [UsageProvider] {
+        registered.filter { Settings.shared.forProvider($0.id).enabled }
     }
 
     static func provider(id: String) -> UsageProvider? {

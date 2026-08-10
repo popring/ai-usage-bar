@@ -28,8 +28,15 @@ struct Settings {
 
     // MARK: - 加载
 
-    /// 进程内只读一次。改了配置重启应用即可。
-    static let shared: Settings = load()
+    /// 当前生效的配置。菜单里的「重新加载配置」会重算它，不需要重启应用。
+    static private(set) var shared: Settings = load()
+
+    /// 重新读盘。改完 config.json 后调用即可生效。
+    @discardableResult
+    static func reload() -> Settings {
+        shared = load()
+        return shared
+    }
 
     private static func load() -> Settings {
         // 放在这里而不是 app 启动回调里：--dump 这类不起 UI 的路径也要覆盖到。
