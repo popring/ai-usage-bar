@@ -14,6 +14,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private lazy var settingsController: SettingsWindowController = {
         let controller = SettingsWindowController()
         controller.onSave = { [weak self] in self?.applyConfigChange() }
+        controller.onTeamAdded = { [weak self] in self?.refresh() }
         return controller
     }()
 
@@ -127,8 +128,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
         reload()
-        let ages = visibleAccounts.compactMap(\.cacheAge)
-        if ages.isEmpty || ages.max()! > Refresher.refreshWindow {
+        // 有账号还没取过数据（cacheAge 为 nil，比如刚加的 team）也要刷。
+        let accounts = visibleAccounts
+        let ages = accounts.compactMap(\.cacheAge)
+        if ages.count < accounts.count || (ages.max() ?? .infinity) > Refresher.refreshWindow {
             refresh()
         }
         rebuildMenu()

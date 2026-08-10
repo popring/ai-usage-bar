@@ -8,6 +8,8 @@ final class SettingsWindowController: NSWindowController {
 
     /// 保存成功后回调（Settings 已 reload 完）。
     var onSave: (() -> Void)?
+    /// 「添加 Claude team」检测到登录完成后回调（拿新 team 的用量）。
+    var onTeamAdded: (() -> Void)?
 
     private let claudeCheck = NSButton(checkboxWithTitle: "Claude Code", target: nil, action: nil)
     private let codexCheck = NSButton(checkboxWithTitle: "Codex", target: nil, action: nil)
@@ -17,6 +19,8 @@ final class SettingsWindowController: NSWindowController {
     private let pollField = NSTextField()
     private let pollStepper = NSStepper()
     private let prefixField = NSTextField()
+    private let addTeamStatus = NSTextField(labelWithString: "")
+    private var teamPollTimer: Timer?
     private var hasShownOnce = false
 
     init() {
@@ -69,8 +73,20 @@ final class SettingsWindowController: NSWindowController {
         pollRow.orientation = .horizontal
         pollField.widthAnchor.constraint(equalToConstant: 60).isActive = true
 
+        let addTeam = NSButton(title: "添加 Claude team…",
+                               target: self, action: #selector(addTeamClicked))
+        addTeam.controlSize = .small
+        addTeamStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        addTeamStatus.textColor = .secondaryLabelColor
+        addTeamStatus.isSelectable = true            // alias 提示要能复制
+        addTeamStatus.lineBreakMode = .byWordWrapping
+        addTeamStatus.maximumNumberOfLines = 4
+        addTeamStatus.preferredMaxLayoutWidth = 280
+
         let grid = NSGridView(views: [
             [gridLabel("显示来源"), claudeCheck],
+            [NSGridCell.emptyContentView, addTeam],
+            [NSGridCell.emptyContentView, addTeamStatus],
             [NSGridCell.emptyContentView, codexCheck],
             [NSGridCell.emptyContentView, litellmCheck],
             [gridLabel("网关地址"), baseURLField],
@@ -147,6 +163,85 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func pollStepped() {
         pollField.integerValue = pollStepper.integerValue
+    }
+
+    /// 一键引导加 team：起个名 → 开终端登录 → 登录完成自动出现在菜单里。
+    /// 登录本身没法代办（浏览器 OAuth + 选 team），能自动化的只有目录、
+    /// 环境变量和「登录好了没」的检测。
+    @objc private func addTeamClicked() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "添加 Claude team"
+        alert.informativeText = "起个短名（建议英文，如 work）。会打开终端让你登录一次，登录时选对应的 team。"
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        nameField.placeholderString = "work"
+        alert.accessoryView = nameField
+        alert.window.initialFirstResponder = nameField
+        alert.addButton(withTitle: "打开终端登录")
+        alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.startTeamLogin(nameField.stringValue.trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    private func startTeamLogin(_ name: String) {
+        guard name.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
+            addTeamStatus.stringValue = "名字只能用字母、数字、- 和 _"
+            return
+        }
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude-\(name)")
+        if UsageReader.read(dir, providerID: "claude-code").isLoggedIn {
+            addTeamStatus.stringValue = "~/.claude-\(name) 已存在且已登录，直接就能看"
+            return
+        }
+
+        // .command 文件 Terminal 双击即执行，不需要任何自动化权限。
+        // GUI 起的 Terminal 是登录 shell，但 PATH 仍显式兜底（同 Refresher）。
+        let script = """
+        #!/bin/bash
+        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+        export CLAUDE_CONFIG_DIR="$HOME/.claude-\(name)"
+        echo "为 team「\(name)」登录 Claude Code：跟着提示走，登录时选对应的 team。"
+        echo "登录完成后退出（/exit）并关掉本窗口，AI Usage Bar 会自动发现。"
+        claude
+        """
+        let scriptURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-usage-bar-login-\(name).command")
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+        } catch {
+            addTeamStatus.stringValue = "准备登录脚本失败：\(error.localizedDescription)"
+            return
+        }
+        NSWorkspace.shared.open(scriptURL)
+        addTeamStatus.stringValue = "已打开终端，等待 ~/.claude-\(name) 登录…"
+        pollForLogin(name: name, dir: dir)
+    }
+
+    private func pollForLogin(name: String, dir: URL) {
+        teamPollTimer?.invalidate()
+        var attempts = 180                            // 5s × 180 = 15 分钟
+        teamPollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            attempts -= 1
+            let account = UsageReader.read(dir, providerID: "claude-code")
+            if account.isLoggedIn {
+                timer.invalidate()
+                self.addTeamStatus.stringValue = """
+                ✓ 已添加 \(account.org ?? name)。想在终端里日常用它，把这行放进 shell 配置：
+                alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/.claude-\(name) claude'
+                """
+                self.onTeamAdded?()
+            } else if attempts <= 0 {
+                timer.invalidate()
+                self.addTeamStatus.stringValue = "没等到登录。之后登录完成也会自动出现在菜单里，不影响。"
+            }
+        }
     }
 
     @objc private func revealClicked() {

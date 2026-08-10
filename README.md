@@ -48,7 +48,7 @@ gateway-key                            $0.00 / $700
 
 ## 配置
 
-菜单 → **设置…**（⌘,）打开配置面板：来源开关、LiteLLM 网关地址与 API Key、轮询间隔、菜单栏前缀。保存立刻生效，不用重启。
+菜单 → **设置…**（⌘,）打开配置面板：来源开关、LiteLLM 网关地址与 API Key、轮询间隔、菜单栏前缀，以及**一键添加 Claude team**（见下方「看多个 team」）。保存立刻生效，不用重启。
 
 面板背后就是 `~/.config/ai-usage-bar/config.json`（尊重 `XDG_CONFIG_HOME`；首次运行自动生成，权限 `0600`），喜欢手改 JSON 依然可以，改完点 **重新加载配置**（⌘L）生效：
 
@@ -74,7 +74,9 @@ gateway-key                            $0.00 / $700
 
 读各配置目录里的 `.claude.json`（`cachedUsageUtilization`），**不碰任何凭证**。刷新靠 `claude -p "/usage" --safe-mode` —— 无头模式能跑斜杠命令，向服务端取实时额度并写回缓存，**不过模型、不花钱**（返回里 `total_cost_usd: 0`、`num_turns: 0`）。
 
-**看多个 team**：同一个账号下的多个 team 需要各自一份登录态，靠多个配置目录实现：
+**看多个 team**：同一个账号下的多个 team 需要各自一份登录态，靠多个配置目录实现。**推荐走面板**：设置 → **添加 Claude team…**，起个短名 → 自动建目录并打开终端 → 你在终端里正常登录（选对应的 team）→ 登录完成后自动出现在菜单里。
+
+手动做等价于：
 
 ```bash
 mkdir -p ~/.claude-work ~/.claude-personal
@@ -82,7 +84,7 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude       # 登录时选 team A
 CLAUDE_CONFIG_DIR=~/.claude-personal claude   # 登录时选 team B
 ```
 
-本程序自动发现 `~/.claude` 和所有 `~/.claude-*`。
+本程序自动发现 `~/.claude` 和所有 `~/.claude-*`。每个 team 登录一次是 Claude Code 凭证模型决定的（一份登录态只属于一个 org），绕不开。
 
 > ⚠️ **别把 `CLAUDE_CONFIG_DIR` export 进 shell 配置** —— 那会让你所有的 `claude` 都搬家，历史、settings、MCP、plugins 全都读不到。用 alias：
 > ```bash
