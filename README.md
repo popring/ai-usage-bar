@@ -1,5 +1,11 @@
 # AI Usage Bar
 
+> A macOS menu bar app that shows the usage quota of all your AI subscriptions in one place —
+> **Claude Code** (including multiple teams under one account), **Codex**, and a self-hosted
+> **LiteLLM** gateway. No telemetry, no third parties; it only talks to the vendors' own
+> endpoints. Requires macOS 13+ and Swift 6 (Command Line Tools is enough — no full Xcode).
+> Docs below are in Chinese; see [Privacy & Security](#隐私与安全) for exactly what it reads and sends.
+
 macOS 菜单栏应用：把你所有 AI 订阅的额度放在一个地方看。
 
 支持 **Claude Code**（含同账号下的多个 team）、**Codex**、**自建 LiteLLM 网关**。菜单栏常驻显示所有来源里最紧张的那个窗口，点开看明细 —— 以及**每份数据是多久之前取的**。
@@ -101,6 +107,38 @@ token 过期时（401）会自动跑一次 `codex doctor` —— 它用 refresh_
 配置来源按优先级：配置文件 → 环境变量 `LITELLM_BASE_URL` / `LITELLM_API_KEY` → shell 配置里的对应 `export`。
 
 最后一条不是偷懒 —— 从 Finder 启动的 `.app` **拿不到 shell 环境变量**，不兜这一层就等于没配。
+
+## 隐私与安全
+
+这个工具会碰到你的凭证，所以把边界写清楚，方便自己审计（全部代码不到 1000 行）。
+
+**读什么**
+
+| 文件 | 内容 | 用途 |
+|---|---|---|
+| `~/.claude.json`、`~/.claude*/.claude.json` | 用量缓存与账号元信息，**不含凭证** | 展示 Claude Code 额度 |
+| `~/.codex/auth.json` | **含 OAuth access token** | 仅用作请求 ChatGPT 的 `Authorization` 头 |
+| `~/.config/ai-usage-bar/config.json` | 你填的 LiteLLM 地址与 key | 请求你自己的网关 |
+| shell 配置（如 `~/.zshrc`） | 只匹配 `LITELLM_BASE_URL` / `LITELLM_API_KEY` 两行 | 配置回退 |
+
+**发到哪**
+
+- `https://chatgpt.com/backend-api/wham/usage` —— 带 Codex token（和 Codex CLI 自己发的是同一个请求）
+- `{你配置的 baseURL}/key/info` —— 带你的网关 key，只发到你自己的网关
+
+**没有第三方、没有遥测、没有分析。** 除上面两个地址外不发任何网络请求。
+
+**跑什么子进程**
+
+- `claude -p "/usage" --safe-mode --output-format json` —— 取 Claude Code 额度
+- `zsh -lc "codex doctor"` —— **仅在 Codex 返回 401 时**，用官方命令刷新过期 token
+
+**写什么**
+
+- `~/.cache/ai-usage-bar/*.json` —— 只落用得上的用量数字，**不含任何 token**
+- `~/.config/ai-usage-bar/config.json` —— 首次运行生成模板，权限 `0600`；已存在但权限过松时启动会收紧
+
+**不做的事**：不读 Keychain、不读浏览器数据、不上传任何东西、不改你的登录态（`codex doctor` 走官方刷新流程，和你自己敲一遍完全一样）。
 
 ## 两个设计取舍
 

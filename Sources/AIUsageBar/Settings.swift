@@ -32,6 +32,9 @@ struct Settings {
     static let shared: Settings = load()
 
     private static func load() -> Settings {
+        // 放在这里而不是 app 启动回调里：--dump 这类不起 UI 的路径也要覆盖到。
+        tightenPermissionsIfNeeded()
+
         guard let data = try? Data(contentsOf: path),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else {
@@ -99,8 +102,22 @@ struct Settings {
             try FileManager.default.createDirectory(
                 at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
             try template.write(to: path, atomically: true, encoding: .utf8)
+            // 这个文件是要放 API key 的，别让同机其他用户读到。
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: path.path)
         } catch {
             // 写不了就算了，全部走默认值，不影响使用。
         }
+    }
+
+    /// 用户可能手动建配置文件、或从别处拷过来，权限未必对。
+    /// 里面存着 API key，启动时收紧一次。
+    static func tightenPermissionsIfNeeded() {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: path.path),
+              let perms = attrs[.posixPermissions] as? NSNumber,
+              perms.int16Value & 0o077 != 0            // group / other 有任何权限
+        else { return }
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
 }
