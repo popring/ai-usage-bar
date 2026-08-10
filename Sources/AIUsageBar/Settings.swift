@@ -74,7 +74,8 @@ struct Settings {
             menuBarPrefix: root["menuBarPrefix"] as? String ?? defaults.menuBarPrefix)
     }
 
-    static let defaults = Settings(providers: [:], pollMinutes: 6, menuBarPrefix: "AI")
+    /// 轮询默认 1 小时：点开菜单会自动刷新，后台轮询只是兜底，没必要密。
+    static let defaults = Settings(providers: [:], pollMinutes: 60, menuBarPrefix: "AI")
 
     // MARK: - 保存（设置面板用）
 
@@ -127,7 +128,7 @@ struct Settings {
         let template = """
         {
           "_说明": "改完重启 AI Usage Bar 生效。删掉某个来源的 enabled 或设为 false 即可隐藏它。",
-          "pollMinutes": 6,
+          "pollMinutes": 60,
           "menuBarPrefix": "AI",
 
           "providers": {

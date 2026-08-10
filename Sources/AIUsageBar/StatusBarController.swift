@@ -8,6 +8,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var accounts: [Account] = []
     private var timer: Timer?
     private var isRefreshing = false
+    private var isMenuOpen = false
     private var lastRefreshNote: String?
 
     private lazy var settingsController: SettingsWindowController = {
@@ -68,6 +69,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             self.lastRefreshNote = failures.isEmpty ? nil : "刷新失败：\(failures[0])"
 
             self.reload()
+            // 菜单开着时原地更新，别让用户对着旧数字等到下次打开。
+            if self.isMenuOpen { self.rebuildMenu() }
         }
     }
 
@@ -119,9 +122,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     // MARK: - 菜单
 
     /// 每次点开都重建，保证时间差（"3分钟前"）是新的。
+    /// 数据超过 /usage 的刷新窗口就顺手刷一遍 —— 后台轮询默认 1 小时，
+    /// 「点开时看到的是新的」主要靠这里。
     func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
         reload()
+        let ages = visibleAccounts.compactMap(\.cacheAge)
+        if ages.isEmpty || ages.max()! > Refresher.refreshWindow {
+            refresh()
+        }
         rebuildMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
     }
 
     /// 要展示的账号。
