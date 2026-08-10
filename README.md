@@ -1,0 +1,143 @@
+# AI Usage Bar
+
+macOS 菜单栏应用：把你所有 AI 订阅的额度放在一个地方看。
+
+支持 **Claude Code**（含同账号下的多个 team）、**Codex**、**自建 LiteLLM 网关**。菜单栏常驻显示所有来源里最紧张的那个窗口，点开看明细 —— 以及**每份数据是多久之前取的**。
+
+```
+CLAUDE CODE
+Work Team                              $6.02 / $200
+  ● █████░░░  63%  7d Opus · 21小时后
+    ███░░░░░  33%  7d 全部 · 21小时后
+    ░░░░░░░░   0%  5h · 4小时后
+Personal
+    未使用
+CODEX
+you@example.com（business）      $208.18 / $30000
+  ● █░░░░░░░   1%  预算 · 21天后
+LiteLLM
+gateway-key                            $0.00 / $700
+  ● ░░░░░░░░   0%  7d 预算 · 6天后
+─────────────
+数据 1分钟前
+立即刷新  ⌘R
+退出      ⌘Q
+```
+
+## 安装
+
+需要 Swift 6（macOS Command Line Tools 自带即可，**不需要完整 Xcode**）。
+
+```bash
+./scripts/bundle.sh && cp -R "build/AI Usage Bar.app" ~/Applications/
+```
+
+也可以直接下 [Releases](../../releases) 里打包好的 `.app`。
+
+开机自启：系统设置 → 通用 → 登录项。
+
+## 配置
+
+首次运行会生成 `~/.config/ai-usage-bar/config.json`：
+
+```json
+{
+  "pollMinutes": 6,
+  "menuBarPrefix": "AI",
+  "providers": {
+    "claude-code": { "enabled": true },
+    "codex":       { "enabled": true },
+    "litellm":     { "enabled": false, "baseURL": "", "apiKey": "" }
+  }
+}
+```
+
+改完重启应用生效。不想看的来源把 `enabled` 改成 `false` 即可，那一组会整个消失。
+
+## 各来源怎么工作
+
+### Claude Code
+
+读各配置目录里的 `.claude.json`（`cachedUsageUtilization`），**不碰任何凭证**。刷新靠 `claude -p "/usage" --safe-mode` —— 无头模式能跑斜杠命令，向服务端取实时额度并写回缓存，**不过模型、不花钱**（返回里 `total_cost_usd: 0`、`num_turns: 0`）。
+
+**看多个 team**：同一个账号下的多个 team 需要各自一份登录态，靠多个配置目录实现：
+
+```bash
+mkdir -p ~/.claude-work ~/.claude-personal
+CLAUDE_CONFIG_DIR=~/.claude-work claude       # 登录时选 team A
+CLAUDE_CONFIG_DIR=~/.claude-personal claude   # 登录时选 team B
+```
+
+本程序自动发现 `~/.claude` 和所有 `~/.claude-*`。
+
+> ⚠️ **别把 `CLAUDE_CONFIG_DIR` export 进 shell 配置** —— 那会让你所有的 `claude` 都搬家，历史、settings、MCP、plugins 全都读不到。用 alias：
+> ```bash
+> alias claude-work='CLAUDE_CONFIG_DIR=$HOME/.claude-work claude'
+> ```
+
+### Codex
+
+`GET https://chatgpt.com/backend-api/wham/usage`，用 `~/.codex/auth.json` 里的 OAuth token 认证 —— 和 Codex CLI 自己用的是同一个凭证、同一个口。
+
+> ⚠️ **未公开接口**，OpenAI 随时可能改。影响范围限于 `CodexProvider.swift`。
+
+**额度长在哪取决于计划类型**，这是最容易踩的坑：
+
+| 计划 | 额度字段 |
+|---|---|
+| 个人版（Plus / Pro） | `rate_limit.primary` / `.secondary` 百分比窗口 |
+| business / team | `spend_control.individual_limit` 的美元额度（此时 `rate_limit` 和 `credits` 都是 `null` / 0） |
+
+本地 session rollout（`~/.codex/sessions/**/rollout-*.jsonl`）**只记 `rate_limits`**，所以在 business 计划下翻本地文件会得出「没有额度数据」的错误结论。必须打接口。
+
+token 过期时（401）会自动跑一次 `codex doctor` —— 它用 refresh_token 换新 token 并写回 `auth.json`，走官方流程，不动你的登录态。
+
+### LiteLLM 网关
+
+[LiteLLM](https://github.com/BerriAI/litellm) 是常见的自建 AI 网关：团队用它统一代理各家模型、按 key 发额度、集中记账。如果你们公司给你发了一个 `sk-` 开头的网关 key 和一个内网地址，多半就是它。
+
+`GET {baseURL}/key/info` 返回这个 key 的 `spend` / `max_budget` / `budget_duration` / `budget_reset_at` —— 也就是「这个周期你花了多少、上限多少、什么时候重置」。这是 LiteLLM 自己的公开接口，不是私有口，所以这条最稳。
+
+配置来源按优先级：配置文件 → 环境变量 `LITELLM_BASE_URL` / `LITELLM_API_KEY` → shell 配置里的对应 `export`。
+
+最后一条不是偷懒 —— 从 Finder 启动的 `.app` **拿不到 shell 环境变量**，不兜这一层就等于没配。
+
+## 两个设计取舍
+
+**1. 刷新有下限。** Claude Code 的 `/usage` 大约 5 分钟才真的重新取数，窗口内重复调用服务端沿用旧数据，**而且命令退出码仍然是 0**。所以程序比对刷新前后的时间戳，只有真往前走了才算更新；自动轮询默认 6 分钟，比这更密纯属白跑。
+
+**2. 永远显示数据年龄。** 这是快照不是实时流，超过 10 分钟标「已过期」。宁可让你看见「3 分钟前」，也不假装实时。
+
+## 加一个新来源
+
+数据获取全在 `UsageProvider` 协议后面，UI 只认 `Account`：
+
+```swift
+struct FooProvider: UsageProvider {
+    let id = "foo"
+    let displayName = "Foo"
+    func readAccounts() -> [Account] { ... }                    // 读本地缓存，不发请求
+    func refresh(_ account: Account) -> RefreshResult { ... }    // 同步阻塞，调度层负责并发
+}
+```
+
+然后注册进 `Provider.swift` 的 `registered` 数组。菜单栏标题、分组展示、并行刷新、数据年龄标注都不用改。
+
+被动推送型的来源可以在 `refresh` 里返回 `.notSupported`，UI 会如实标出来而不是假装刷新过。
+
+## 调试
+
+```bash
+swift run AIUsageBar --dump              # 不起 UI，只读本地
+swift run AIUsageBar --dump --refresh    # 先刷新再打印
+```
+
+## 已知限制
+
+- Claude Code 的默认目录 `~/.claude` 会跟着你在界面里切 team 而变。它和某个专用目录指向同一个 team 时会被自动隐藏 —— 专用目录才是稳定的那份。
+- 只覆盖订阅制额度。API 计费账号（Anthropic Console / OpenAI Platform）是另一套，不在这里。
+- 没被刷新过的来源显示「还没取过」，点一次「立即刷新」即可。
+
+## License
+
+MIT
