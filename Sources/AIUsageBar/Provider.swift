@@ -28,6 +28,9 @@ enum RefreshResult {
     /// 命中来源自己的刷新窗口，服务端沿用了旧数据。
     case notYet(age: TimeInterval)
     case failed(String)
+    /// 登录态已死（过期/被拒/没登录过），重试救不回来，得用户重新登录。
+    /// UI 对它给引导动作，普通 failed 只展示原因。
+    case needsLogin(String)
     /// 该来源不支持主动刷新（比如网关是被动推的）。
     case notSupported
 }

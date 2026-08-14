@@ -8,7 +8,7 @@
 
 macOS 菜单栏应用：把你所有 AI 订阅的额度放在一个地方看。
 
-支持 **Claude Code**（含同账号下的多个 team）、**Codex**、**自建 LiteLLM 网关**。菜单栏常驻显示所有来源里最紧张的那个窗口，点开看明细 —— 以及**每份数据是多久之前取的**。点菜单里的账号名可以把菜单栏**固定**成只看那个账号（一个 team 用满、切到别的 team 干活时用），再点一次恢复自动。
+支持 **Claude Code**（含同账号下的多个 team）、**Codex**、**自建 LiteLLM 网关**。菜单栏默认**跟随 Claude Desktop / Claude Code 当前登录的 team**（快通道读 Desktop 本地存储的当前 org，切 team 秒级跟随；慢通道用 `~/.claude` 共享登录态兜底）；点开看明细 —— 以及**每份数据是多久之前取的**。点菜单里的账号名可以把菜单栏**固定**成只看那个账号（手动固定优先于跟随），再点一次取消；把「跟随 Desktop 当前 team」也关掉就回到「显示所有来源里最紧张的窗口」。
 
 ```
 CLAUDE CODE
@@ -27,6 +27,7 @@ gateway-key                            $0.00 / $700
 ─────────────
 数据 1分钟前
 立即刷新  ⌘R
+✓ 跟随 Desktop 当前 team
 ─────────────
 设置…     ⌘,
 重新加载配置 ⌘L
@@ -127,6 +128,7 @@ token 过期时（401）会自动跑一次 `codex doctor` —— 它用 refresh_
 | 文件 | 内容 | 用途 |
 |---|---|---|
 | `~/.claude.json`、`~/.claude*/.claude.json` | 用量缓存与账号元信息，**不含凭证** | 展示 Claude Code 额度 |
+| `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | 只正则抓 `lastOrganization` 的 org uuid，其余字节不解析不存储 | 「跟随 Desktop 当前 team」的实时信号 |
 | `~/.codex/auth.json` | **含 OAuth access token** | 仅用作请求 ChatGPT 的 `Authorization` 头 |
 | `~/.config/ai-usage-bar/config.json` | 你填的 LiteLLM 地址与 key | 请求你自己的网关 |
 | shell 配置（如 `~/.zshrc`） | 只匹配 `LITELLM_BASE_URL` / `LITELLM_API_KEY` 两行 | 配置回退 |

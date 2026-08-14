@@ -9,7 +9,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var timer: Timer?
     private var isRefreshing = false
     private var isMenuOpen = false
-    private var lastRefreshNote: String?
+    /// 上一轮刷新里出问题的账号（key → 结果），在对应账号下方就地展示。
+    private var refreshIssues: [String: RefreshResult] = [:]
+    private var defaultDirWatcher: FileWatcher?
+    private var desktopTeamWatcher: DesktopTeamWatcher?
+    /// 上次跟随的目标，用来区分「切了 team」和普通的状态文件写入。
+    private var lastFollowTargetKey: String?
 
     private lazy var settingsController: SettingsWindowController = {
         let controller = SettingsWindowController()
@@ -26,8 +31,42 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         statusItem.menu = menu
         reload()
+        lastFollowTargetKey = followTargetKey
         refresh()
         restartTimer()
+        watchDesktopTeam()
+    }
+
+    /// 两路信号盯住「Desktop 当前在哪个 team」：
+    /// - 快通道：Desktop 自己的 Local Storage，切 org 的瞬间落盘（见 `DesktopTeamWatcher`）；
+    /// - 慢通道：默认目录状态文件 `~/.claude.json`。Desktop 和默认目录共享登录态，
+    ///   但要等内嵌 Claude Code 重新同步才改写，滞后几十秒，当兜底和启动初值。
+    private func watchDesktopTeam() {
+        desktopTeamWatcher = DesktopTeamWatcher { [weak self] _ in
+            self?.desktopSignalChanged()
+        }
+        let state = UsageReader.stateFile(for: UsageReader.home.appendingPathComponent(".claude"))
+            ?? UsageReader.home.appendingPathComponent(".claude.json")
+        defaultDirWatcher = FileWatcher(path: state.path) { [weak self] in
+            self?.desktopSignalChanged()
+        }
+    }
+
+    /// 用来探测「跟随目标变没变」的键。
+    private var followTargetKey: String? { followedAccount?.key ?? desktopOrgKey }
+
+    /// 任一信号动了。慢通道多数时候只是 Claude Code 在写用量缓存，
+    /// 顺手把新数字带出来；真正切了 team 才需要额外动作。
+    private func desktopSignalChanged() {
+        reload()
+        if isMenuOpen { rebuildMenu() }
+
+        guard followTargetKey != lastFollowTargetKey else { return }
+        lastFollowTargetKey = followTargetKey
+        // 刚切过去的 team 数据可能是很久以前的，顺手刷一遍。
+        if followDesktop, let followed = followedAccount, followed.isStale {
+            refresh()
+        }
     }
 
     /// 轮询间隔来自配置，重新加载配置后要重建定时器。
@@ -63,13 +102,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             guard let self else { return }
             self.isRefreshing = false
 
-            let failures = results.values.compactMap { r -> String? in
-                if case .failed(let m) = r { return m }
-                return nil
+            self.refreshIssues = results.filter { _, r in
+                switch r {
+                case .failed, .needsLogin: return true
+                default: return false
+                }
             }
-            self.lastRefreshNote = failures.isEmpty ? nil : "刷新失败：\(failures[0])"
 
             self.reload()
+            // 正在用的 team 快满了就主动喊人，别等用户自己发现 100%。
+            QuotaAlert.check(focused: self.pinnedOrFollowed, all: self.visibleAccounts)
             // 菜单开着时原地更新，别让用户对着旧数字等到下次打开。
             if self.isMenuOpen { self.rebuildMenu() }
         }
@@ -86,13 +128,50 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "pinnedAccountKey") }
     }
 
-    /// 默认显示所有账号里最紧张的那个窗口；固定了账号就只看它。
+    /// 跟随模式：菜单栏自动固定到 Desktop（=默认目录）当前登录的 team。
+    /// 手动固定优先于跟随；找不到跟随目标（没登录默认目录）就退回自动。
+    private var followDesktop: Bool {
+        get { UserDefaults.standard.object(forKey: "followDesktopTeam") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "followDesktopTeam") }
+    }
+
+    /// Desktop 当前登录的账号（默认目录的登录态就是 Desktop 的登录态）。
+    private var desktopAccount: Account? {
+        accounts.first { $0.isDefaultDir && $0.isLoggedIn }
+    }
+
+    /// Desktop 当前的 org，只用来探测「切没切 team」。
+    private var desktopOrgKey: String? { desktopAccount?.orgKey }
+
+    /// 跟随模式下菜单栏应该盯住的账号。默认目录被同 org 的专用目录顶掉时，
+    /// 匹配到的是那个专用目录 —— 数据是同一份配额，无所谓哪份 cache。
+    ///
+    /// 快通道信号优先（uuid 精确匹配）；抓不到或者那个 org 没配过 team 目录，
+    /// 退回慢通道（默认目录登录态）。
+    private var followedAccount: Account? {
+        guard followDesktop else { return nil }
+        if let uuid = desktopTeamWatcher?.currentOrgUuid,
+           let hit = visibleAccounts.first(where: { $0.orgUuid == uuid }) {
+            return hit
+        }
+        guard let desktop = desktopAccount else { return nil }
+        return visibleAccounts.first { $0.sameOrg(as: desktop) }
+    }
+
+    /// 正在关注的账号：手动固定优先，其次跟随 Desktop；都没有为 nil（自动模式）。
+    private var pinnedOrFollowed: Account? {
+        (visibleAccounts.first { $0.key == pinnedKey }) ?? followedAccount
+    }
+
+    /// 默认显示所有账号里最紧张的那个窗口；固定/跟随了账号就只看它。
     private func updateTitle() {
-        // 固定的账号可能已退出登录或被配置关掉，找不到就退回自动。
+        // 固定的账号可能已退出登录或被配置关掉，找不到就退回跟随/自动。
         let pinned = visibleAccounts.first { $0.key == pinnedKey }
-        let worst = pinned.map { [$0] } ?? visibleAccounts
+        let focused = pinned ?? followedAccount
+        let worst = focused.map { [$0] } ?? visibleAccounts
         let window = worst.compactMap(\.tightestWindow).max { $0.percent < $1.percent }
         statusItem.button?.toolTip = pinned.map { "已固定：\($0.org ?? $0.label)" }
+            ?? followedAccount.map { "跟随 Desktop：\($0.org ?? $0.label)" }
 
         let prefix = Settings.shared.menuBarPrefix
         let text: String
@@ -147,10 +226,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// 那种情况下把默认目录藏掉 —— 专用目录才是稳定的那份。
     private var visibleAccounts: [Account] {
         let loggedIn = accounts.filter(\.isLoggedIn)
-        let dedicatedOrgs = Set(loggedIn.filter { !$0.isDefaultDir }.compactMap(\.org))
+        let dedicated = loggedIn.filter { !$0.isDefaultDir }
         return loggedIn.filter { account in
-            guard account.isDefaultDir, let org = account.org else { return true }
-            return !dedicatedOrgs.contains(org)
+            guard account.isDefaultDir else { return true }
+            return !dedicated.contains { $0.sameOrg(as: account) }
         }
     }
 
@@ -184,16 +263,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(info("数据 \(Fmt.ago(oldest))" + (stale ? " · 已过期" : ""),
                               size: 11, color: stale ? .systemOrange : .tertiaryLabelColor))
         }
-        if let note = lastRefreshNote {
-            menu.addItem(info("⚠ \(note)", size: 11, color: .systemOrange))
-        }
-
         let refreshItem = NSMenuItem(
             title: isRefreshing ? "刷新中…" : "立即刷新",
             action: #selector(refreshClicked), keyEquivalent: "r")
         refreshItem.target = self
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
+
+        let followItem = NSMenuItem(title: "跟随 Desktop 当前 team",
+                                    action: #selector(followClicked), keyEquivalent: "")
+        followItem.target = self
+        followItem.state = followDesktop ? .on : .off
+        followItem.toolTip = "菜单栏自动固定到 Claude Desktop（也就是默认目录 ~/.claude）"
+            + "当前登录的 team，切 team 秒级跟随。手动固定的账号优先。"
+        menu.addItem(followItem)
 
         menu.addItem(.separator())
 
@@ -222,13 +305,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if let extra = account.extraUsage, extra.hasBuffer {
             title += String(format: "   $%.2f / $%.0f", extra.used, extra.limit)
         }
-        // 点账号名 = 固定/取消固定到菜单栏（✓ 标在固定的那个上）。
+        // 点账号名 = 固定/取消固定到菜单栏（✓ 标在固定的那个上，– 标在跟随目标上）。
         let header = NSMenuItem(title: title, action: #selector(pinClicked(_:)),
                                 keyEquivalent: "")
         header.target = self
         header.representedObject = account.key
-        header.state = account.key == pinnedKey ? .on : .off
-        header.toolTip = "点击后菜单栏只显示这个账号；再点一次恢复自动"
+        header.state = account.key == pinnedKey ? .on
+            : (pinnedKey == nil && account.key == followedAccount?.key ? .mixed : .off)
+        header.toolTip = "点击后菜单栏只显示这个账号；再点一次恢复"
+            + (followDesktop ? "跟随 Desktop" : "自动")
         header.attributedTitle = NSAttributedString(
             string: title,
             attributes: [
@@ -240,6 +325,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         if let error = account.error {
             menu.addItem(info("   \(error)", size: 11))
+            addRefreshIssue(for: account)
             return
         }
 
@@ -251,6 +337,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 .map { "\($0.displayName) 0% · 重置 \(Fmt.until($0.resetsAt))" }
                 .joined(separator: "\n")
             menu.addItem(item)
+            addRefreshIssue(for: account)
             return
         }
 
@@ -261,6 +348,29 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             let color: NSColor = window.percent >= 90 ? .systemRed
                 : window.percent >= 70 ? .systemOrange : .labelColor
             menu.addItem(info(line, size: 11, mono: true, color: color))
+        }
+
+        addRefreshIssue(for: account)
+    }
+
+    /// 上一轮刷新的问题就地挂在账号下面。登录死了的给一个可点的修复入口，
+    /// 其他失败只说原因。
+    private func addRefreshIssue(for account: Account) {
+        switch refreshIssues[account.key] {
+        case .needsLogin(let message):
+            menu.addItem(info("   ⚠ \(message)，数据停在上面那份", size: 11, color: .systemOrange))
+            guard account.providerID == "claude-code" else { break }
+            let fix = NSMenuItem(title: "   ⟳ 在终端重新登录…",
+                                 action: #selector(reloginClicked(_:)), keyEquivalent: "")
+            fix.target = self
+            fix.representedObject = account.localID
+            fix.toolTip = "打开终端跑 claude auth login（\(account.label)），"
+                + "浏览器授权完成后回来点「立即刷新」"
+            menu.addItem(fix)
+        case .failed(let message):
+            menu.addItem(info("   ⚠ 刷新失败：\(message)", size: 11, color: .systemOrange))
+        default:
+            break
         }
     }
 
@@ -285,9 +395,49 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func refreshClicked() { refresh() }
 
+    /// 生成一个 .command 丢给 Terminal 跑 `claude auth login`。
+    /// 不走 AppleScript 控制 Terminal —— 那要多弹一次「自动化」授权框。
+    @objc private func reloginClicked(_ sender: NSMenuItem) {
+        guard let dirPath = sender.representedObject as? String else { return }
+        let dirName = URL(fileURLWithPath: dirPath).lastPathComponent
+
+        var lines = [
+            "#!/bin/zsh",
+            #"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH""#,
+        ]
+        if dirName != ".claude" {
+            lines.append("export CLAUDE_CONFIG_DIR=\"$HOME/\(dirName)\"")
+        }
+        lines += [
+            "echo '==> 重新登录 \(dirName)：浏览器会弹授权页，选对 team 后回到这里'",
+            "claude auth login",
+            "echo '==> 完成。回菜单栏点「立即刷新」，本窗口可以关了'",
+        ]
+
+        let file = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/ai-usage-bar")
+            .appendingPathComponent("relogin\(dirName).command")
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: file.path)
+            NSWorkspace.shared.open(file)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
     @objc private func pinClicked(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String else { return }
         pinnedKey = pinnedKey == key ? nil : key
+        updateTitle()
+    }
+
+    @objc private func followClicked() {
+        followDesktop.toggle()
+        lastFollowTargetKey = followTargetKey
         updateTitle()
     }
 
@@ -304,7 +454,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// 配置变了（面板保存 / 手动重载）之后的统一善后。
     private func applyConfigChange() {
         restartTimer()
-        lastRefreshNote = nil
+        refreshIssues = [:]
         refresh()
     }
 

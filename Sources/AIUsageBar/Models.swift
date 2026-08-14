@@ -47,12 +47,25 @@ struct Account {
 
     var isLoggedIn = false
     var org: String?
+    /// org 的 uuid（Claude Code 的 oauthAccount 里有）。重名 org 时名字不可靠，匹配用它。
+    var orgUuid: String?
     var email: String?
     var seatTier: String?
     var fetchedAt: Date?
     var windows: [LimitWindow] = []
     var extraUsage: ExtraUsage?
     var error: String?
+
+    /// 判断两个账号是不是同一个 org 用的键，uuid 优先。只适合和自己旧值比（探测变化）；
+    /// 跨账号比较用 `sameOrg(as:)` —— 老状态文件可能缺 uuid，直接比键会误判成不同 org。
+    var orgKey: String? { orgUuid ?? org }
+
+    /// 是否同一个 org：两边都有 uuid 才比 uuid，否则退回名字。
+    func sameOrg(as other: Account) -> Bool {
+        if let a = orgUuid, let b = other.orgUuid { return a == b }
+        if let a = org, let b = other.org { return a == b }
+        return false
+    }
 
     /// 数据年龄。没有数据时为 nil。
     var cacheAge: TimeInterval? {

@@ -69,20 +69,29 @@ enum UsageReader {
 
         account.isLoggedIn = true
         account.org = oauth["organizationName"] as? String
+        account.orgUuid = oauth["organizationUuid"] as? String
         account.email = oauth["emailAddress"] as? String
         account.seatTier = oauth["seatTier"] as? String
 
-        guard let cached = root["cachedUsageUtilization"] as? [String: Any],
-              let fetchedMs = cached["fetchedAtMs"] as? Double
-        else {
+        if let cached = root["cachedUsageUtilization"] as? [String: Any],
+           let fetchedMs = cached["fetchedAtMs"] as? Double {
+            account.fetchedAt = Date(timeIntervalSince1970: fetchedMs / 1000)
+            let util = cached["utilization"] as? [String: Any] ?? [:]
+            account.windows = parseWindows(util)
+            account.extraUsage = parseExtra(util)
+        } else {
             account.error = "还没取过用量"
-            return account
         }
-        account.fetchedAt = Date(timeIntervalSince1970: fetchedMs / 1000)
 
-        let util = cached["utilization"] as? [String: Any] ?? [:]
-        account.windows = parseWindows(util)
-        account.extraUsage = parseExtra(util)
+        // `.claude.json` 的缓存只有交互式 /usage 才更新（CLI ≥2.1.228 无头跑不动了），
+        // 主力数据来自 Refresher 直连端点的结果 —— 两边谁新用谁。
+        if let fresh = Refresher.cached(configDir),
+           fresh.fetchedAt > (account.fetchedAt ?? .distantPast) {
+            account.fetchedAt = fresh.fetchedAt
+            account.windows = parseWindows(fresh.utilization)
+            account.extraUsage = parseExtra(fresh.utilization)
+            account.error = nil
+        }
         return account
     }
 
