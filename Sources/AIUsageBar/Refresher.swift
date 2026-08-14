@@ -3,13 +3,17 @@ import Foundation
 
 /// 直连 Anthropic 的 usage 端点刷新某个配置目录的额度。
 ///
-/// 背景：CLI ≥2.1.228（2026-08-12）起，无头 `claude -p "/usage"` 变成空转 ——
-/// 退出码 0、~40ms 返回、不发网络请求、不写 `cachedUsageUtilization`，
-/// 原来「起子进程替我们刷缓存」的路死了。现在自己动手：
-///   1. 从 Keychain 读该目录的 OAuth access token（只读，不刷新、不写回）
+/// 主路径：
+///   1. 从 Keychain 读该目录的 OAuth access token（只读，不写回）
 ///   2. `GET api.anthropic.com/api/oauth/usage`（Claude Code 自己也走这个口）
 ///   3. 结果落到本应用自己的缓存 —— **不回写 `.claude.json`**，那是 Claude Code
 ///      的活状态文件，读改写有竞态，丢数据的锅背不起。
+///
+/// 续命兜底：access token 只活 8 小时，我们不自己做 refresh-token 轮换（和 CLI
+/// 抢写 Keychain 会打架）。token 过期时起一次无头 `claude -p "/usage"`，CLI 会用
+/// refreshToken 换新 token 写回 Keychain，我们再重试直连。无头 /usage 在 CLI
+/// 2.1.228（2026-08-12）空转过、2.1.232 已恢复；它再坏也只是这个目录退回
+/// 「需要重新登录」，不影响直连主路径。
 enum Refresher {
 
     /// 刷新节流（UI 层用）。端点每次都返回实时数据，这只是别打太勤。
@@ -42,41 +46,30 @@ enum Refresher {
         case .fail(let msg):       return .failed(msg)
         }
 
-        var request = URLRequest(url: usageURL, timeoutInterval: timeout)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("ai-usage-bar", forHTTPHeaderField: "User-Agent")
+        var reply = hitUsageEndpoint(token, timeout: timeout)
 
-        var payload: Data?
-        var status = 0
-        var transportError: String?
-        let semaphore = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            payload = data
-            status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            transportError = error?.localizedDescription
-            semaphore.signal()
-        }.resume()
-        guard semaphore.wait(timeout: .now() + timeout + 5) == .success else {
-            return .failed("超时（\(Int(timeout))s）")
+        // 实测这个端点对过期 OAuth token 回 429 rate_limit_error（不是 401），别被骗了。
+        // 真限流也长这样，但托盘的频率不至于——按过期处理：起一次 CLI 续命后重试一次。
+        if reply.error == nil, reply.status == 401 || reply.status == 429 {
+            if reauthViaCLI(configDir), case .ok(let fresh) = readAccessToken(configDir) {
+                reply = hitUsageEndpoint(fresh, timeout: timeout)
+            }
         }
 
-        if let transportError { return .failed(transportError) }
-        if status == 401 {
+        if let error = reply.error { return .failed(error) }
+        if reply.status == 401 {
             return .needsLogin("token 失效（401）")
         }
-        if status == 429 {
-            // 实测这个端点对过期 OAuth session 回 429（不是 401）。真限流也长这样，
-            // 但托盘一小时打一次不至于，按过期处理。
+        if reply.status == 429 {
             return .needsLogin("登录已过期（429）")
         }
-        guard status == 200 else {
+        guard reply.status == 200 else {
             // 排查形状变化全靠响应体，截一段带出来。
-            let body = payload.flatMap { String(data: $0, encoding: .utf8) }?
+            let body = reply.payload.flatMap { String(data: $0, encoding: .utf8) }?
                 .prefix(120) ?? ""
-            return .failed("HTTP \(status) \(body)")
+            return .failed("HTTP \(reply.status) \(body)")
         }
-        guard let payload,
+        guard let payload = reply.payload,
               let util = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
         else { return .failed("返回不是 JSON") }
         // 响应结构 = `.claude.json` 里 cachedUsageUtilization.utilization。
@@ -97,6 +90,64 @@ enum Refresher {
             return .failed("缓存写不进去：\(error.localizedDescription)")
         }
         return .updated
+    }
+
+    private static func hitUsageEndpoint(
+        _ token: String, timeout: TimeInterval
+    ) -> (status: Int, payload: Data?, error: String?) {
+        var request = URLRequest(url: usageURL, timeoutInterval: timeout)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("ai-usage-bar", forHTTPHeaderField: "User-Agent")
+
+        var payload: Data?
+        var status = 0
+        var transportError: String?
+        let semaphore = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            payload = data
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            transportError = error?.localizedDescription
+            semaphore.signal()
+        }.resume()
+        guard semaphore.wait(timeout: .now() + timeout + 5) == .success else {
+            return (0, nil, "超时（\(Int(timeout))s）")
+        }
+        return (status, payload, transportError)
+    }
+
+    /// token 过期时的续命兜底：起无头 CLI，它会用 refreshToken 换新 access token
+    /// 写回 Keychain（它自己写的凭证，不弹授权框）。只关心 token 被续上，不读输出。
+    private static func reauthViaCLI(_ configDir: URL, timeout: TimeInterval = 90) -> Bool {
+        var env = ProcessInfo.processInfo.environment
+        // 坑：默认目录必须 **不设** CLAUDE_CONFIG_DIR。显式设成 ~/.claude 会让
+        // Claude Code 去 ~/.claude/.claude.json 找状态，那是另一个（空的）位置。
+        if configDir.lastPathComponent == ".claude" {
+            env.removeValue(forKey: "CLAUDE_CONFIG_DIR")
+        } else {
+            env["CLAUDE_CONFIG_DIR"] = configDir.path
+        }
+        // GUI 程序继承到的 PATH 很短，claude 一般装在 ~/.local/bin。
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:"
+            + (env["PATH"] ?? "/usr/bin:/bin")
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["claude", "-p", "/usage", "--safe-mode"]
+        proc.environment = env
+        proc.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { return false }
+
+        // 超时看门狗：到点仍在跑就杀掉，别把后台刷新任务永远挂住。
+        let deadline = Date().addingTimeInterval(timeout)
+        while proc.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        if proc.isRunning { proc.terminate(); return false }
+        return proc.terminationStatus == 0
     }
 
     /// 本应用自己缓存的最近一次直连结果。没刷过 / 读不出来为 nil。
