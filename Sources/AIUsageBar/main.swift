@@ -56,7 +56,7 @@ func runDump(refresh: Bool) -> Never {
             print("  数据 \(Fmt.ago(age))\(account.isStale ? " ⚠ 已过期" : "")")
         }
         if let error = account.error { print("  \(error)") }
-        for w in account.windows.sorted(by: { $0.percent > $1.percent }) {
+        for w in account.windows.sorted(by: { ($0.sortRank, $0.label) < ($1.sortRank, $1.label) }) {
             let mark = w.isActive ? "●" : " "
             print(String(format: "  %@ %@ %3d%%  %@ · 重置 %@",
                          mark, Fmt.bar(w.percent), Int(w.percent.rounded()),

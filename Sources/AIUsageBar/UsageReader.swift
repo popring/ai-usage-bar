@@ -19,6 +19,8 @@ enum UsageReader {
             at: home, includingPropertiesForKeys: nil, options: [])) ?? []
         dirs += contents
             .filter { $0.lastPathComponent.hasPrefix(".claude-") && isDir($0) }
+            // claude-swap 的备份目录不是 Claude 配置目录，别当成一个 team。
+            .filter { $0.lastPathComponent != ".claude-swap-backup" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         return dirs

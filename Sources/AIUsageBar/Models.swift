@@ -8,6 +8,18 @@ struct LimitWindow {
     let resetsAt: Date?
     let isActive: Bool
 
+    /// 菜单里的固定展示顺序：短周期在前，与用量无关 —— 顺序稳定才好逐次对比。
+    var sortRank: Int {
+        switch kind {
+        case "session": return 0
+        case "weekly_all": return 1
+        case "weekly_scoped": return 2
+        case "window": return 3       // Codex 个人版，同 rank 内按 label（5h < 7d）
+        case "budget": return 4
+        default: return 5
+        }
+    }
+
     /// 菜单里空间紧张，名字要短。
     var displayName: String {
         switch kind {

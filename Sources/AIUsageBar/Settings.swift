@@ -136,6 +136,10 @@ struct Settings {
               "enabled": true,
               "_说明": "自动发现 ~/.claude 和 ~/.claude-* 配置目录，无需额外配置。"
             },
+            "claude-swap": {
+              "enabled": true,
+              "_说明": "读 claude-swap（cswap）的 ~/.claude-swap-backup 缓存，无需额外登录。和 Claude Code 目录同 org 时自动去重，目录那份优先。"
+            },
             "codex": {
               "enabled": true,
               "_说明": "读 ~/.codex/auth.json，无需额外配置。个人版看百分比窗口，business/team 看支出额度。"

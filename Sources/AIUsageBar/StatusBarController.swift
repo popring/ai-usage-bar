@@ -226,10 +226,19 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// 那种情况下把默认目录藏掉 —— 专用目录才是稳定的那份。
     private var visibleAccounts: [Account] {
         let loggedIn = accounts.filter(\.isLoggedIn)
-        let dedicated = loggedIn.filter { !$0.isDefaultDir }
-        return loggedIn.filter { account in
+        let dedicated = loggedIn.filter {
+            !$0.isDefaultDir && $0.providerID != "claude-swap"
+        }
+        let stable = loggedIn.filter { account in
             guard account.isDefaultDir else { return true }
             return !dedicated.contains { $0.sameOrg(as: account) }
+        }
+        // claude-swap 的槽位和已登录的 Claude Code 目录经常指同一批 org。
+        // 目录那份能主动刷新，同 org 时留它；swap 只补没有目录登录态的 org。
+        let fromDirs = stable.filter { $0.providerID == "claude-code" }
+        return stable.filter { account in
+            guard account.providerID == "claude-swap" else { return true }
+            return !fromDirs.contains { $0.sameOrg(as: account) }
         }
     }
 
@@ -330,7 +339,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         // 全 0 的 team 没什么可看的，折叠成一行，细节丢进 tooltip。
-        let windows = account.windows.sorted { $0.percent > $1.percent }
+        // 固定顺序（5h → 7d 全部 → 7d 单模型 → 预算），不按用量排 —— 会跳的顺序没法逐次对比。
+        let windows = account.windows.sorted {
+            ($0.sortRank, $0.label) < ($1.sortRank, $1.label)
+        }
         guard windows.contains(where: { $0.percent > 0 }) else {
             let item = info("   未使用", size: 11, color: .tertiaryLabelColor)
             item.toolTip = windows

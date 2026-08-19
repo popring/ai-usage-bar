@@ -40,6 +40,7 @@ enum ProviderRegistry {
     /// 全部已实现的来源。加新来源只动这里。
     private static let registered: [UsageProvider] = [
         ClaudeCodeProvider(),
+        ClaudeSwapProvider(),
         CodexProvider(),
         LiteLLMProvider(),
     ]

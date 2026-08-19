@@ -29,6 +29,8 @@ final class SettingsWindowController: NSWindowController {
     private let teamsStack = NSStackView()
     private var teamDirs: [URL] = []
     private let codexStatus = NSTextField(labelWithString: "")
+    private let swapCheck = NSButton(checkboxWithTitle: "Claude Swap", target: nil, action: nil)
+    private let swapStatus = NSTextField(labelWithString: "")
     private let litellmNote = NSTextField(labelWithString: "")
     private var litellmNoteRow: NSView!
     private var teamPollTimer: Timer?
@@ -123,6 +125,14 @@ final class SettingsWindowController: NSWindowController {
         codexRow.orientation = .horizontal
         codexRow.spacing = 8
 
+        // claude-swap 同样零配置（读 ~/.claude-swap-backup），只给状态反馈。
+        swapStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        swapCheck.toolTip = "读 claude-swap（cswap）录入的账号，无需在本应用重复登录；"
+            + "和 Claude Code 目录同 org 时自动去重，目录那份优先"
+        let swapRow = NSStackView(views: [swapCheck, swapStatus])
+        swapRow.orientation = .horizontal
+        swapRow.spacing = 8
+
         // 网关的值可能来自环境变量 / ~/.zshrc（Finder 启动的 app 读不到 shell 环境，
         // 但 provider 会去 ~/.zshrc 捞）。populate 会把生效值回填并在这里标注来源。
         litellmNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -136,7 +146,7 @@ final class SettingsWindowController: NSWindowController {
         addTeamStatusRow.isHidden = true
         let sourceStack = NSStackView(views: [
             claudeCheck, indented(teamsStack), indented(addTeam), addTeamStatusRow,
-            codexRow, litellmCheck, litellmNoteRow,
+            swapRow, codexRow, litellmCheck, litellmNoteRow,
         ])
         sourceStack.orientation = .vertical
         sourceStack.alignment = .leading
@@ -224,6 +234,12 @@ final class SettingsWindowController: NSWindowController {
         let codexOn = CodexProvider.isLoggedIn
         codexStatus.stringValue = codexOn ? "已登录" : "未登录（跑一次 codex 登录即可）"
         codexStatus.textColor = codexOn ? .secondaryLabelColor : .tertiaryLabelColor
+
+        swapCheck.state = settings.forProvider("claude-swap").enabled ? .on : .off
+        let swapCount = ClaudeSwapProvider().readAccounts().count
+        swapStatus.stringValue = swapCount > 0
+            ? "已发现 \(swapCount) 个账号" : "未检测到 claude-swap 数据"
+        swapStatus.textColor = swapCount > 0 ? .secondaryLabelColor : .tertiaryLabelColor
 
         let litellm = settings.forProvider("litellm")
         litellmCheck.state = litellm.enabled ? .on : .off
@@ -498,6 +514,7 @@ final class SettingsWindowController: NSWindowController {
             try Settings.save(
                 providerEnabled: [
                     "claude-code": claudeCheck.state == .on,
+                    "claude-swap": swapCheck.state == .on,
                     "codex": codexCheck.state == .on,
                     "litellm": litellmCheck.state == .on,
                 ],
