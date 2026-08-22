@@ -9,6 +9,13 @@ enum AppHome {
         ?? FileManager.default.homeDirectoryForCurrentUser
 }
 
+/// App version, for the menu footer — "which build am I running" shouldn't need a
+/// trip to Finder. Read from the bundle's Info.plist; plain `swift run` has no bundle.
+enum AppInfo {
+    static let version: String =
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
+}
+
 /// One quota window (5-hour session / 7-day all-models / 7-day per-model).
 struct LimitWindow {
     let kind: String        // session | weekly_all | weekly_scoped

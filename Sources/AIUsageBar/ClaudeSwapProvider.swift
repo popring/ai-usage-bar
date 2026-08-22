@@ -4,12 +4,12 @@ import Foundation
 ///
 /// Consumes its output directly — no need to log in again in this app:
 /// - `~/.claude-swap-backup/cache/usage.json`: 5h / 7d / per-model window usage
-///   per account, from cswap's own polling (roughly every 10 minutes by default)
+///   per account, written by cswap's collector (which `refresh` below triggers)
 /// - `~/.claude-swap-backup/configs/.claude-config-<slot>-<email>.json`:
 ///   full Claude config backup per account, source of org name / seatTier
 ///
-/// Read-only; never touches its credentials or state. Refresh cadence is
-/// claude-swap's own — this app has no hook to trigger one (refresh returns notSupported).
+/// Read-only; never touches its credentials or state. Refresh drives cswap's own
+/// collector (`cswap list`) rather than fetching anything itself.
 struct ClaudeSwapProvider: UsageProvider {
     let id = "claude-swap"
     let displayName = "Claude Swap"
@@ -52,8 +52,29 @@ struct ClaudeSwapProvider: UsageProvider {
             }
     }
 
-    /// claude-swap polls on its own; there is no hook to trigger a refresh here.
-    func refresh(_ account: Account) -> RefreshResult { .notSupported }
+    /// cswap has no daemon: `cache/usage.json` is only rewritten while its CLI runs
+    /// (a slot switch, `cswap auto`, the TUI). Read passively, this source silently
+    /// freezes for hours between switches — so drive it instead. `cswap list` re-fetches
+    /// every slot and rewrites the cache; it only reads, and never switches slots.
+    func refresh(_ account: Account) -> RefreshResult { Self.collect() }
+
+    /// One `cswap list` covers every slot, so the per-account calls of a refresh batch
+    /// collapse into a single run; the rest read the cache it just wrote.
+    private static let gate = NSLock()
+    private static var lastCollectAt = Date.distantPast
+    private static let collectWindow: TimeInterval = 60
+
+    private static func collect() -> RefreshResult {
+        gate.lock()
+        defer { gate.unlock() }
+        let age = Date().timeIntervalSince(lastCollectAt)
+        if age < collectWindow { return .notYet(age: age) }
+        guard CLI.run(["cswap", "list"], timeout: 60) else {
+            return .failed(L("cswap 跑不起来", "can't run cswap"))
+        }
+        lastCollectAt = Date()
+        return .updated
+    }
 
     // MARK: - Parsing details
 

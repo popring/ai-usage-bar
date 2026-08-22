@@ -129,36 +129,13 @@ enum Refresher {
     /// refreshToken for a new access token and writes it to Keychain (its own credential,
     /// so no authorization prompt). We only care that the token gets renewed; output is ignored.
     private static func reauthViaCLI(_ configDir: URL, timeout: TimeInterval = 90) -> Bool {
-        var env = ProcessInfo.processInfo.environment
         // Gotcha: for the default directory CLAUDE_CONFIG_DIR must be **unset**. Setting it
         // explicitly to ~/.claude makes Claude Code look for state in ~/.claude/.claude.json,
         // which is a different (empty) location.
-        if configDir.lastPathComponent == ".claude" {
-            env.removeValue(forKey: "CLAUDE_CONFIG_DIR")
-        } else {
-            env["CLAUDE_CONFIG_DIR"] = configDir.path
-        }
-        // GUI apps inherit a short PATH; claude is usually installed in ~/.local/bin.
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:"
-            + (env["PATH"] ?? "/usr/bin:/bin")
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["claude", "-p", "/usage", "--safe-mode"]
-        proc.environment = env
-        proc.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
-        do { try proc.run() } catch { return false }
-
-        // Watchdog: kill it if still running at the deadline, so a background refresh never hangs forever.
-        let deadline = Date().addingTimeInterval(timeout)
-        while proc.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        if proc.isRunning { proc.terminate(); return false }
-        return proc.terminationStatus == 0
+        let configEnv = configDir.lastPathComponent == ".claude" ? nil : configDir.path
+        return CLI.run(["claude", "-p", "/usage", "--safe-mode"],
+                       env: ["CLAUDE_CONFIG_DIR": configEnv],
+                       timeout: timeout)
     }
 
     /// This app's cached result of the last direct fetch; nil if never fetched or unreadable.

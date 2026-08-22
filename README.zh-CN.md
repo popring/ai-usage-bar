@@ -85,7 +85,7 @@ CLAUDE_CONFIG_DIR=~/.claude-personal claude   # 登录时选 team B
 
 用 [claude-swap](https://github.com/realiti4/claude-swap) 管理多个 Claude 账号的话，**什么都不用配**：本程序直接读它的产物（`~/.claude-swap-backup/` 下的用量缓存和配置备份），所有槽位账号自动出现在菜单里，当前切到的槽位标「在用」。
 
-只读、不碰它的凭证与状态；刷新节奏由 claude-swap 自己控制（默认约 10 分钟一轮），所以这组没有「立即刷新」—— 菜单会如实标注数据年龄。没装 cswap 这一组不会出现。
+只读、不碰它的凭证与状态。cswap 没有后台常驻进程，用量缓存只在它自己的 CLI 跑起来时才会重写，放着不管这组数字可能几个小时不动；所以「立即刷新」会去驱动 cswap 自己的采集（`cswap list`，只读全部槽位、不切号），跑完再重读缓存。没装 cswap 这一组不会出现。
 
 ### Codex
 
@@ -123,7 +123,7 @@ token 过期时（401）会自动跑一次 `codex doctor` —— 它用 refresh_
 | 文件 | 内容 | 用途 |
 |---|---|---|
 | `~/.claude.json`、`~/.claude*/.claude.json` | 用量缓存与账号元信息，**不含凭证** | 展示 Claude Code 额度 |
-| `~/.claude-swap-backup/cache/usage.json` 等 | claude-swap 自己轮询到的各槽位用量与 org 元信息，**只读** | 展示 cswap 账号额度 |
+| `~/.claude-swap-backup/cache/usage.json` 等 | claude-swap 自己的采集写入的各槽位用量与 org 元信息，**只读** | 展示 cswap 账号额度 |
 | `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | 只正则抓 `lastOrganization` 的 org uuid，其余字节不解析不存储 | 跟随功能（Desktop 侧）的实时信号 |
 | `~/.codex/auth.json` | **含 OAuth access token** | 仅用作请求 ChatGPT 的 `Authorization` 头 |
 | `~/.config/ai-usage-bar/config.json` | 你填的 LiteLLM 地址与 key | 请求你自己的网关 |

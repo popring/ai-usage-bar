@@ -327,6 +327,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        menu.addItem(info("AI Usage Bar \(AppInfo.version)", size: 11, color: .tertiaryLabelColor))
+
         let quit = NSMenuItem(title: L("退出", "Quit"), action: #selector(quitClicked), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)

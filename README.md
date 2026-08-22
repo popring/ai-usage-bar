@@ -85,7 +85,7 @@ The app auto-discovers `~/.claude` and every `~/.claude-*`. Logging in once per 
 
 If you manage multiple Claude accounts with [claude-swap](https://github.com/realiti4/claude-swap), **there is nothing to set up**: the app reads its artifacts directly (the usage cache and config backups under `~/.claude-swap-backup/`), every slot account appears in the menu, and the currently active slot is marked.
 
-Read-only — never touches its credentials or state. Refresh cadence is claude-swap's own (roughly every 10 minutes by default), so this group has no "Refresh Now"; the menu honestly labels data age instead. Without cswap installed, the group simply doesn't appear.
+Read-only — never touches its credentials or state. cswap has no background daemon: its usage cache is only rewritten while its CLI runs, so left alone this group can sit frozen for hours. "Refresh Now" therefore drives cswap's own collector (`cswap list`, which reads every slot and switches nothing) and then re-reads the cache. Without cswap installed, the group simply doesn't appear.
 
 ### Codex
 
@@ -123,7 +123,7 @@ This tool touches your credentials, so the boundaries are spelled out for easy a
 | File | Contents | Purpose |
 |---|---|---|
 | `~/.claude.json`, `~/.claude*/.claude.json` | Usage cache and account metadata, **no credentials** | Show Claude Code quota |
-| `~/.claude-swap-backup/cache/usage.json` etc. | Per-slot usage and org metadata polled by claude-swap itself, **read-only** | Show cswap account quota |
+| `~/.claude-swap-backup/cache/usage.json` etc. | Per-slot usage and org metadata written by claude-swap's own collector, **read-only** | Show cswap account quota |
 | `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | Regex-extracts only the `lastOrganization` org uuid; no other bytes parsed or stored | Real-time signal for the follow feature (Desktop side) |
 | `~/.codex/auth.json` | **Contains the OAuth access token** | Used solely as the `Authorization` header to ChatGPT |
 | `~/.config/ai-usage-bar/config.json` | The LiteLLM URL and key you entered | Query your own gateway |
