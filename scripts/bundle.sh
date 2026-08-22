@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="AI Usage Bar"
 BUNDLE_ID="dev.popring.ai-usage-bar"
-VERSION="0.4.0"
+VERSION="0.5.0"
 OUT="${1:-build}"
 APP="$OUT/$APP_NAME.app"
 
