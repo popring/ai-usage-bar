@@ -85,7 +85,7 @@ The app auto-discovers `~/.claude` and every `~/.claude-*`. Logging in once per 
 
 If you manage multiple Claude accounts with [claude-swap](https://github.com/realiti4/claude-swap), **there is nothing to set up**: the app reads its artifacts directly (the usage cache and config backups under `~/.claude-swap-backup/`), every slot account appears in the menu, and the currently active slot is marked.
 
-Read-only — never touches its credentials or state. cswap has no background daemon: its usage cache is only rewritten while its CLI runs, so left alone this group can sit frozen for hours. "Refresh Now" therefore drives cswap's own collector (`cswap list`, which reads every slot and switches nothing) and then re-reads the cache. Without cswap installed, the group simply doesn't appear.
+Read-only — never touches its credentials or state. cswap has no background daemon: its usage cache is only rewritten while its CLI runs, so left alone this group can sit frozen for hours. So every refresh this app does — the background poll, opening the menu on stale data, or "Refresh Now" — drives cswap's own collector (`cswap list`, which reads every slot and switches nothing) and then re-reads the cache. You get the same automatic cadence as every other source. Without cswap installed, the group simply doesn't appear.
 
 ### Codex
 
