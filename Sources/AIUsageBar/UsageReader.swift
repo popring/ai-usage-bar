@@ -54,18 +54,18 @@ enum UsageReader {
         )
 
         guard let state = stateFile(for: configDir) else {
-            account.error = "未登录"
+            account.error = L("未登录", "Not logged in")
             return account
         }
         guard
             let data = try? Data(contentsOf: state),
             let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else {
-            account.error = "状态文件读不出来"
+            account.error = L("状态文件读不出来", "can't read state file")
             return account
         }
         guard let oauth = root["oauthAccount"] as? [String: Any] else {
-            account.error = "未登录"
+            account.error = L("未登录", "Not logged in")
             return account
         }
 
@@ -82,7 +82,7 @@ enum UsageReader {
             account.windows = parseWindows(util)
             account.extraUsage = parseExtra(util)
         } else {
-            account.error = "还没取过用量"
+            account.error = L("还没取过用量", "usage not fetched yet")
         }
 
         // `.claude.json` 的缓存只有交互式 /usage 才更新（CLI ≥2.1.228 无头跑不动了），

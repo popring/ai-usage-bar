@@ -18,18 +18,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 func runDump(refresh: Bool) -> Never {
     if refresh {
         let targets = ProviderRegistry.readAllAccounts().filter(\.isLoggedIn)
-        print("刷新 \(targets.count) 个账号…")
+        print(String(format: L("刷新 %d 个账号…", "Refreshing %d account(s)…"), targets.count))
         let semaphore = DispatchSemaphore(value: 0)
         ProviderRegistry.refresh(targets) { results in
             for account in targets {
                 let name = account.label
                 switch results[account.key] {
-                case .updated:            print("  ✓ \(name) 已更新")
-                case .notYet(let age):    print("  · \(name) 窗口内重复调用，仍是 \(Fmt.ago(age))的")
+                case .updated:            print("  ✓ \(name) " + L("已更新", "updated"))
+                case .notYet(let age):    print("  · \(name) " + String(format: L("窗口内重复调用，仍是 %@的", "still within refresh window, data from %@"), Fmt.ago(age)))
                 case .failed(let m):      print("  ✗ \(name) \(m)")
-                case .needsLogin(let m):  print("  ✗ \(name) \(m)（重新登录：claude auth login）")
-                case .notSupported:       print("  – \(name) 该来源不支持主动刷新")
-                case nil:                 print("  ? \(name) 无结果")
+                case .needsLogin(let m):  print("  ✗ \(name) \(m)" + L("（重新登录：claude auth login）", " (re-login: claude auth login)"))
+                case .notSupported:       print("  – \(name) " + L("该来源不支持主动刷新", "provider does not support manual refresh"))
+                case nil:                 print("  ? \(name) " + L("无结果", "no result"))
                 }
             }
             semaphore.signal()
@@ -43,22 +43,22 @@ func runDump(refresh: Bool) -> Never {
 
     for account in ProviderRegistry.readAllAccounts() {
         guard account.isLoggedIn else {
-            print("\(account.label): \(account.error ?? "未登录")")
+            print("\(account.label): \(account.error ?? L("未登录", "not logged in"))")
             continue
         }
         print("\(account.org ?? account.label)  [\(account.label)]")
         if let email = account.email, let tier = account.seatTier {
             // org uuid 截前 8 位够肉眼对；缺失说明状态文件太老，跟随/去重会退回按名字匹配。
-            let uuid = account.orgUuid.map { "org \($0.prefix(8))" } ?? "org uuid 缺失"
+            let uuid = account.orgUuid.map { "org \($0.prefix(8))" } ?? L("org uuid 缺失", "org uuid missing")
             print("  \(email) · \(tier) · \(uuid)")
         }
         if let age = account.cacheAge {
-            print("  数据 \(Fmt.ago(age))\(account.isStale ? " ⚠ 已过期" : "")")
+            print("  " + L("数据 ", "Data ") + Fmt.ago(age) + (account.isStale ? L(" ⚠ 已过期", " ⚠ stale") : ""))
         }
         if let error = account.error { print("  \(error)") }
         for w in account.windows.sorted(by: { ($0.sortRank, $0.label) < ($1.sortRank, $1.label) }) {
             let mark = w.isActive ? "●" : " "
-            print(String(format: "  %@ %@ %3d%%  %@ · 重置 %@",
+            print(String(format: L("  %@ %@ %3d%%  %@ · 重置 %@", "  %@ %@ %3d%%  %@ · resets %@"),
                          mark, Fmt.bar(w.percent), Int(w.percent.rounded()),
                          w.displayName, Fmt.until(w.resetsAt)))
         }
@@ -66,7 +66,7 @@ func runDump(refresh: Bool) -> Never {
             let amounts = e.isCredits
                 ? String(format: "%g / %g credits", e.used, e.limit)
                 : String(format: "$%.2f / $%.2f", e.used, e.limit)
-            print("    额外额度 \(amounts)\(e.hasBuffer ? "" : "（无兜底）")")
+            print("    " + L("额外额度 ", "Extra usage ") + amounts + (e.hasBuffer ? "" : L("（无兜底）", " (no buffer)")))
         }
         print("")
     }
@@ -81,19 +81,20 @@ if args.contains("--dump") {
 /// `--test-alert`：造一个 95% 的假账号走一遍通知链路（授权弹窗 + 横幅）。
 /// 必须从 .app bundle 里跑，`swift run` 直跑没有 bundle 会被静默跳过。
 if args.contains("--test-alert") {
-    var fake = Account(providerID: "claude-code", localID: "/tmp/fake", label: "测试Team")
+    var fake = Account(providerID: "claude-code", localID: "/tmp/fake", label: L("测试Team", "Test Team"))
     fake.isLoggedIn = true
-    fake.org = "测试Team"
+    fake.org = L("测试Team", "Test Team")
     fake.windows = [LimitWindow(kind: "session", label: "", percent: 95,
                                 resetsAt: Date().addingTimeInterval(3600), isActive: true)]
-    var alt = Account(providerID: "claude-code", localID: "/tmp/fake2", label: "备胎Team")
+    var alt = Account(providerID: "claude-code", localID: "/tmp/fake2", label: L("备胎Team", "Backup Team"))
     alt.isLoggedIn = true
-    alt.org = "备胎Team"
+    alt.org = L("备胎Team", "Backup Team")
     alt.windows = [LimitWindow(kind: "session", label: "", percent: 12,
                                resetsAt: nil, isActive: true)]
     UserDefaults.standard.removeObject(forKey: "quotaAlertedKeys")   // 测试不受去重挡
     QuotaAlert.check(focused: fake, all: [fake, alt])
-    print("已触发测试通知（若无横幅：检查系统设置 > 通知 > AI Usage Bar）")
+    print(L("已触发测试通知（若无横幅：检查系统设置 > 通知 > AI Usage Bar）",
+            "Test notification fired (no banner? check System Settings > Notifications > AI Usage Bar)"))
     RunLoop.main.run(until: Date().addingTimeInterval(3))
     exit(0)
 }
@@ -106,8 +107,8 @@ if args.contains("--desktop-org") {
     let watcher = DesktopTeamWatcher { uuid in
         print("\(Date()) org -> \(uuid)")
     }
-    print("初值: \(watcher.currentOrgUuid ?? "未抓到（历史值已被压进 .ldb，切一次 team 就有了）")")
-    print("盯着 Desktop 切 team…（Ctrl-C 退出）")
+    print("\(L("初值: ", "Initial: "))\(watcher.currentOrgUuid ?? L("未抓到（历史值已被压进 .ldb，切一次 team 就有了）", "not captured (history compacted into .ldb; switch team once to populate)"))")
+    print(L("盯着 Desktop 切 team…（Ctrl-C 退出）", "Watching Desktop team switches… (Ctrl-C to quit)"))
     RunLoop.main.run()
 }
 

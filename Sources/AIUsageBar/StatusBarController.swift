@@ -170,8 +170,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let focused = pinned ?? followedAccount
         let worst = focused.map { [$0] } ?? visibleAccounts
         let window = worst.compactMap(\.tightestWindow).max { $0.percent < $1.percent }
-        statusItem.button?.toolTip = pinned.map { "已固定：\($0.org ?? $0.label)" }
-            ?? followedAccount.map { "跟随 Desktop：\($0.org ?? $0.label)" }
+        statusItem.button?.toolTip = pinned.map { "\(L("已固定：", "Pinned: "))\($0.org ?? $0.label)" }
+            ?? followedAccount.map { "\(L("跟随 Desktop：", "Following Desktop: "))\($0.org ?? $0.label)" }
 
         let prefix = Settings.shared.menuBarPrefix
         let text: String
@@ -247,8 +247,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let shown = visibleAccounts
         if shown.isEmpty {
-            menu.addItem(info("没有已登录的账号", size: 12))
-            menu.addItem(info("先跑 claude 登录，或建 ~/.claude-<名字> 目录", size: 11))
+            menu.addItem(info(L("没有已登录的账号", "No logged-in accounts"), size: 12))
+            menu.addItem(info(L("先跑 claude 登录，或建 ~/.claude-<名字> 目录",
+                               "Run claude to log in, or create a ~/.claude-<name> directory"), size: 11))
         } else {
             // 多个来源时按来源分组；只有一个来源就不加这层噪音。
             let providers = ProviderRegistry.all.filter { p in
@@ -269,33 +270,36 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         // 数据年龄放全局一行 —— 各账号是一起刷新的，没必要每组重复一次。
         if let oldest = shown.compactMap(\.cacheAge).max() {
             let stale = shown.contains { $0.isStale }
-            menu.addItem(info("数据 \(Fmt.ago(oldest))" + (stale ? " · 已过期" : ""),
+            menu.addItem(info(L("数据 ", "Data ") + Fmt.ago(oldest) + (stale ? L(" · 已过期", " · stale") : ""),
                               size: 11, color: stale ? .systemOrange : .tertiaryLabelColor))
         }
         let refreshItem = NSMenuItem(
-            title: isRefreshing ? "刷新中…" : "立即刷新",
+            title: isRefreshing ? L("刷新中…", "Refreshing…") : L("立即刷新", "Refresh Now"),
             action: #selector(refreshClicked), keyEquivalent: "r")
         refreshItem.target = self
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
 
-        let followItem = NSMenuItem(title: "跟随 Desktop 当前 team",
+        let followItem = NSMenuItem(title: L("跟随 Desktop 当前 team", "Follow Desktop's current team"),
                                     action: #selector(followClicked), keyEquivalent: "")
         followItem.target = self
         followItem.state = followDesktop ? .on : .off
-        followItem.toolTip = "菜单栏自动固定到 Claude Desktop（也就是默认目录 ~/.claude）"
-            + "当前登录的 team，切 team 秒级跟随。手动固定的账号优先。"
+        followItem.toolTip = L("菜单栏自动固定到 Claude Desktop（也就是默认目录 ~/.claude）"
+                                   + "当前登录的 team，切 team 秒级跟随。手动固定的账号优先。",
+                               "Pins the menu bar to whichever team Claude Desktop (i.e. the default"
+                                   + " directory ~/.claude) is logged into, following team switches within"
+                                   + " seconds. A manually pinned account takes priority.")
         menu.addItem(followItem)
 
         menu.addItem(.separator())
 
-        let settingsItem = NSMenuItem(title: "设置…",
+        let settingsItem = NSMenuItem(title: L("设置…", "Settings…"),
                                       action: #selector(settingsClicked), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
 
         // 手改 JSON 的路径依然保留（面板只覆盖常用项），所以重载入口不能少。
-        let reloadItem = NSMenuItem(title: "重新加载配置",
+        let reloadItem = NSMenuItem(title: L("重新加载配置", "Reload Config"),
                                     action: #selector(reloadConfigClicked), keyEquivalent: "l")
         reloadItem.target = self
         reloadItem.toolTip = Settings.path.path
@@ -303,7 +307,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "退出", action: #selector(quitClicked), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L("退出", "Quit"), action: #selector(quitClicked), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
@@ -323,8 +327,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         header.representedObject = account.key
         header.state = account.key == pinnedKey ? .on
             : (pinnedKey == nil && account.key == followedAccount?.key ? .mixed : .off)
-        header.toolTip = "点击后菜单栏只显示这个账号；再点一次恢复"
-            + (followDesktop ? "跟随 Desktop" : "自动")
+        header.toolTip = followDesktop
+            ? L("点击后菜单栏只显示这个账号；再点一次恢复跟随 Desktop",
+                "Click to show only this account in the menu bar; click again to undo (back to Follow Desktop)")
+            : L("点击后菜单栏只显示这个账号；再点一次恢复自动",
+                "Click to show only this account in the menu bar; click again to undo (back to Auto)")
         header.attributedTitle = NSAttributedString(
             string: title,
             attributes: [
@@ -346,9 +353,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             ($0.sortRank, $0.label) < ($1.sortRank, $1.label)
         }
         guard windows.contains(where: { $0.percent > 0 }) else {
-            let item = info("   未使用", size: 11, color: .tertiaryLabelColor)
+            let item = info("   " + L("未使用", "unused"), size: 11, color: .tertiaryLabelColor)
             item.toolTip = windows
-                .map { "\($0.displayName) 0% · 重置 \(Fmt.until($0.resetsAt))" }
+                .map { "\($0.displayName) 0% · \(L("重置 ", "resets "))\(Fmt.until($0.resetsAt))" }
                 .joined(separator: "\n")
             menu.addItem(item)
             addRefreshIssue(for: account)
@@ -372,17 +379,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func addRefreshIssue(for account: Account) {
         switch refreshIssues[account.key] {
         case .needsLogin(let message):
-            menu.addItem(info("   ⚠ \(message)，数据停在上面那份", size: 11, color: .systemOrange))
+            menu.addItem(info("   ⚠ \(message)" + L("，数据停在上面那份", " — showing last fetched data"),
+                              size: 11, color: .systemOrange))
             guard account.providerID == "claude-code" else { break }
-            let fix = NSMenuItem(title: "   ⟳ 在终端重新登录…",
+            let fix = NSMenuItem(title: "   ⟳ " + L("在终端重新登录…", "Re-login in Terminal…"),
                                  action: #selector(reloginClicked(_:)), keyEquivalent: "")
             fix.target = self
             fix.representedObject = account.localID
-            fix.toolTip = "打开终端跑 claude auth login（\(account.label)），"
-                + "浏览器授权完成后回来点「立即刷新」"
+            fix.toolTip = String(format: L("打开终端跑 claude auth login（%@），浏览器授权完成后回来点「立即刷新」",
+                                           "Opens Terminal to run claude auth login (%@); after authorizing in the browser, come back and click \"Refresh Now\""),
+                                 account.label)
             menu.addItem(fix)
         case .failed(let message):
-            menu.addItem(info("   ⚠ 刷新失败：\(message)", size: 11, color: .systemOrange))
+            menu.addItem(info("   ⚠ " + L("刷新失败：", "Refresh failed: ") + message,
+                              size: 11, color: .systemOrange))
         default:
             break
         }
@@ -422,10 +432,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if dirName != ".claude" {
             lines.append("export CLAUDE_CONFIG_DIR=\"$HOME/\(dirName)\"")
         }
+        let echoIntro = String(
+            format: L("==> 重新登录 %@：浏览器会弹授权页，选对 team 后回到这里",
+                      "==> Re-login %@: the browser will open an auth page; pick the right team, then come back here"),
+            dirName)
+        let echoOutro = L("==> 完成。回菜单栏点「立即刷新」，本窗口可以关了",
+                          "==> Done. Click \"Refresh Now\" in the menu bar; you can close this window")
         lines += [
-            "echo '==> 重新登录 \(dirName)：浏览器会弹授权页，选对 team 后回到这里'",
+            "echo '\(echoIntro)'",
             "claude auth login",
-            "echo '==> 完成。回菜单栏点「立即刷新」，本窗口可以关了'",
+            "echo '\(echoOutro)'",
         ]
 
         let file = AppHome.url

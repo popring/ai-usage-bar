@@ -31,7 +31,8 @@ struct ClaudeSwapProvider: UsageProvider {
             .sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
             .compactMap { slot in
                 guard let raw = slots[slot] else { return nil }
-                var account = Account(providerID: id, localID: slot, label: "槽位 \(slot)")
+                var account = Account(providerID: id, localID: slot,
+                                      label: L("槽位 \(slot)", "Slot \(slot)"))
                 account.isLoggedIn = true
                 account.email = raw["email"] as? String
                 account.orgUuid = raw["organizationUuid"] as? String

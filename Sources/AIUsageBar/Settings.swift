@@ -22,6 +22,8 @@ struct Settings {
     var providers: [String: ProviderSettings]
     var pollMinutes: Int
     var menuBarPrefix: String
+    /// 界面语言："auto"（跟随系统）/ "zh" / "en"。
+    var language: String
 
     /// 尊重 XDG_CONFIG_HOME（默认 ~/.config）。注意 `homeDirectoryForCurrentUser`
     /// 不认 $HOME 环境变量，想在测试里隔离配置只能靠 XDG_CONFIG_HOME。
@@ -41,6 +43,7 @@ struct Settings {
     @discardableResult
     static func reload() -> Settings {
         shared = load()
+        L10n.reload()
         return shared
     }
 
@@ -71,11 +74,13 @@ struct Settings {
         return Settings(
             providers: providers,
             pollMinutes: max(1, root["pollMinutes"] as? Int ?? defaults.pollMinutes),
-            menuBarPrefix: root["menuBarPrefix"] as? String ?? defaults.menuBarPrefix)
+            menuBarPrefix: root["menuBarPrefix"] as? String ?? defaults.menuBarPrefix,
+            language: root["language"] as? String ?? defaults.language)
     }
 
     /// 轮询默认 1 小时：点开菜单会自动刷新，后台轮询只是兜底，没必要密。
-    static let defaults = Settings(providers: [:], pollMinutes: 60, menuBarPrefix: "AI")
+    static let defaults = Settings(providers: [:], pollMinutes: 60, menuBarPrefix: "AI",
+                                   language: "auto")
 
     // MARK: - 保存（设置面板用）
 
@@ -85,13 +90,15 @@ struct Settings {
     static func save(providerEnabled: [String: Bool],
                      providerOptions: [String: [String: String]],
                      pollMinutes: Int,
-                     menuBarPrefix: String) throws {
+                     menuBarPrefix: String,
+                     language: String) throws {
         var root = (try? Data(contentsOf: path))
             .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
 
         // 下限 5：/usage 大约 5 分钟才真的重新取数，比这更密纯属白跑。
         root["pollMinutes"] = max(5, pollMinutes)
         root["menuBarPrefix"] = menuBarPrefix
+        root["language"] = language
 
         var providers = root["providers"] as? [String: Any] ?? [:]
         for (id, enabled) in providerEnabled {
@@ -123,13 +130,18 @@ struct Settings {
     // MARK: - 模板
 
     /// 首次运行写一份模板，用户照着填就行。已存在则不动。
+    ///
+    /// 注意不能用 `L()`：模板在 `load()` 期间写，那时 `Settings.shared` 还没初始化完，
+    /// `L()` 读 shared 会静态初始化重入。此时也还没有配置可言，直接判系统语言。
     static func writeTemplateIfMissing() {
         guard !FileManager.default.fileExists(atPath: path.path) else { return }
-        let template = """
+        let zh = Locale.preferredLanguages.first?.hasPrefix("zh") ?? false
+        let template = zh ? """
         {
-          "_说明": "改完重启 AI Usage Bar 生效。删掉某个来源的 enabled 或设为 false 即可隐藏它。",
+          "_说明": "改完重启 AI Usage Bar 生效。删掉某个来源的 enabled 或设为 false 即可隐藏它。language: auto=跟随系统, zh, en。",
           "pollMinutes": 60,
           "menuBarPrefix": "AI",
+          "language": "auto",
 
           "providers": {
             "claude-code": {
@@ -149,6 +161,35 @@ struct Settings {
               "baseURL": "",
               "apiKey": "",
               "_说明": "自建 LiteLLM 网关。填上 baseURL 和 apiKey 并把 enabled 改成 true。也可以改用环境变量 LITELLM_BASE_URL / LITELLM_API_KEY。"
+            }
+          }
+        }
+
+        """ : """
+        {
+          "_note": "Restart AI Usage Bar after editing. Set a provider's enabled to false (or delete it) to hide it. language: auto = follow system, zh, en.",
+          "pollMinutes": 60,
+          "menuBarPrefix": "AI",
+          "language": "auto",
+
+          "providers": {
+            "claude-code": {
+              "enabled": true,
+              "_note": "Auto-discovers ~/.claude and ~/.claude-* config directories; no setup needed."
+            },
+            "claude-swap": {
+              "enabled": true,
+              "_note": "Reads claude-swap (cswap)'s ~/.claude-swap-backup cache; no extra login. Deduplicated with Claude Code directories sharing an org — the directory wins."
+            },
+            "codex": {
+              "enabled": true,
+              "_note": "Reads ~/.codex/auth.json; no setup needed. Personal plans show percentage windows, business/team shows spend quota."
+            },
+            "litellm": {
+              "enabled": false,
+              "baseURL": "",
+              "apiKey": "",
+              "_note": "Self-hosted LiteLLM gateway. Fill in baseURL and apiKey, then set enabled to true. Env vars LITELLM_BASE_URL / LITELLM_API_KEY also work."
             }
           }
         }

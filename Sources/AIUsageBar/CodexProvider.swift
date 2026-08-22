@@ -38,12 +38,12 @@ struct CodexProvider: UsageProvider {
         guard let data = try? Data(contentsOf: Self.cacheFile),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else {
-            account.error = "还没取过，点「立即刷新」"
+            account.error = L("还没取过，点「立即刷新」", "Not fetched yet — click \"Refresh Now\"")
             return [account]
         }
 
         let plan = root["plan"] as? String
-        account.org = [root["email"] as? String, plan.map { "（\($0)）" }]
+        account.org = [root["email"] as? String, plan.map { L("（\($0)）", " (\($0))") }]
             .compactMap { $0 }.joined()
         account.email = root["email"] as? String
         account.seatTier = plan
@@ -79,7 +79,7 @@ struct CodexProvider: UsageProvider {
         }
 
         if account.windows.isEmpty && account.extraUsage == nil {
-            account.error = "该计划未下发额度数据"
+            account.error = L("该计划未下发额度数据", "this plan exposes no quota data")
         }
         return [account]
     }
@@ -91,7 +91,10 @@ struct CodexProvider: UsageProvider {
         case .failure(.unauthorized):
             // access token 过期了。`codex doctor` 会用 refresh_token 换一个新的
             // 并写回 auth.json —— 比自己走 OAuth 刷新流程安全，也不动用户的登录态。
-            guard refreshToken() else { return .failed("token 过期，且刷新失败（试试跑一次 codex）") }
+            guard refreshToken() else {
+                return .failed(L("token 过期，且刷新失败（试试跑一次 codex）",
+                                 "token expired, and refresh failed (try running codex once)"))
+            }
             switch fetch() {
             case .success(let json): return persist(json)
             case .failure(let e):    return .failed(e.message)
@@ -108,11 +111,11 @@ struct CodexProvider: UsageProvider {
 
         var message: String {
             switch self {
-            case .noAuth:            return "读不到 ~/.codex/auth.json"
-            case .unauthorized:      return "token 未授权"
+            case .noAuth:            return L("读不到 ~/.codex/auth.json", "can't read ~/.codex/auth.json")
+            case .unauthorized:      return L("token 未授权", "token unauthorized")
             case .http(let code):    return "HTTP \(code)"
             case .transport(let m):  return m
-            case .badPayload:        return "返回看不懂"
+            case .badPayload:        return L("返回看不懂", "unrecognized response")
             }
         }
     }
@@ -142,7 +145,7 @@ struct CodexProvider: UsageProvider {
             semaphore.signal()
         }.resume()
         guard semaphore.wait(timeout: .now() + 25) == .success else {
-            return .failure(.transport("超时"))
+            return .failure(.transport(L("超时", "timed out")))
         }
         if let transportError { return .failure(.transport(transportError)) }
         if status == 401 { return .failure(.unauthorized) }
@@ -233,7 +236,8 @@ struct CodexProvider: UsageProvider {
                 withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: slim).write(to: Self.cacheFile)
         } catch {
-            return .failed("缓存写不进去：\(error.localizedDescription)")
+            return .failed(L("缓存写不进去：\(error.localizedDescription)",
+                             "can't write cache: \(error.localizedDescription)"))
         }
         return .updated
     }

@@ -32,9 +32,10 @@ struct LimitWindow {
     var displayName: String {
         switch kind {
         case "session": return "5h"
-        case "weekly_all": return "7d 全部"
-        case "weekly_scoped": return label.isEmpty ? "7d 单模型" : "7d \(label)"
-        case "budget": return label.isEmpty ? "预算" : "\(label) 预算"
+        case "weekly_all": return L("7d 全部", "7d all")
+        case "weekly_scoped": return label.isEmpty ? L("7d 单模型", "7d model") : "7d \(label)"
+        case "budget": return label.isEmpty ? L("预算", "budget")
+            : L("\(label) 预算", "\(label) budget")
         case "window": return label            // Codex 个人版，label 已经是 5h / 7d
         default: return kind
         }
@@ -112,23 +113,23 @@ struct Account {
 // MARK: - 格式化
 
 enum Fmt {
-    /// "3分钟前" / "2小时前"
+    /// "3分钟前" / "3m ago"
     static func ago(_ seconds: TimeInterval) -> String {
         let s = Int(max(0, seconds))
-        if s < 60 { return "\(s)秒前" }
-        if s < 3600 { return "\(s / 60)分钟前" }
-        if s < 86400 { return "\(s / 3600)小时前" }
-        return "\(s / 86400)天前"
+        if s < 60 { return L("\(s)秒前", "\(s)s ago") }
+        if s < 3600 { return L("\(s / 60)分钟前", "\(s / 60)m ago") }
+        if s < 86400 { return L("\(s / 3600)小时前", "\(s / 3600)h ago") }
+        return L("\(s / 86400)天前", "\(s / 86400)d ago")
     }
 
-    /// "4小时后" / "5天后"
+    /// "4小时后" / "in 4h"
     static func until(_ date: Date?) -> String {
         guard let date else { return "—" }
         let d = date.timeIntervalSinceNow
-        if d <= 0 { return "已过" }
-        if d < 3600 { return "\(Int(d / 60))分钟后" }
-        if d < 86400 { return "\(Int(d / 3600))小时后" }
-        return "\(Int(d / 86400))天后"
+        if d <= 0 { return L("已过", "passed") }
+        if d < 3600 { return L("\(Int(d / 60))分钟后", "in \(Int(d / 60))m") }
+        if d < 86400 { return L("\(Int(d / 3600))小时后", "in \(Int(d / 3600))h") }
+        return L("\(Int(d / 86400))天后", "in \(Int(d / 86400))d")
     }
 
     /// 12 格进度条。非零但不足一格时也给一格 —— 否则 4% 会显示成全空，看着像没用。

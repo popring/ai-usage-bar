@@ -13,7 +13,7 @@ final class SettingsWindowController: NSWindowController {
 
     private let claudeCheck = NSButton(checkboxWithTitle: "Claude Code", target: nil, action: nil)
     private let codexCheck = NSButton(checkboxWithTitle: "Codex", target: nil, action: nil)
-    private let litellmCheck = NSButton(checkboxWithTitle: "LiteLLM 网关", target: nil, action: nil)
+    private let litellmCheck = NSButton(checkboxWithTitle: L("LiteLLM 网关", "LiteLLM Gateway"), target: nil, action: nil)
     private let baseURLField = NSTextField()
     // API key 的密文/明文是两个字段切着用（NSSecureTextField 自己变不了明文），
     // 值以当前可见的那个为准，切换时互相同步。
@@ -24,6 +24,7 @@ final class SettingsWindowController: NSWindowController {
     private let pollField = NSTextField()
     private let pollStepper = NSStepper()
     private let prefixField = NSTextField()
+    private let languagePopup = NSPopUpButton()
     private let addTeamStatus = NSTextField(labelWithString: "")
     private var addTeamStatusRow: NSView!
     private let teamsStack = NSStackView()
@@ -41,7 +42,7 @@ final class SettingsWindowController: NSWindowController {
             contentRect: .zero,
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
-        window.title = "AI Usage Bar 设置"
+        window.title = L("AI Usage Bar 设置", "AI Usage Bar Settings")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.contentView = buildContent()
@@ -80,10 +81,10 @@ final class SettingsWindowController: NSWindowController {
         apiKeyToggle.bezelStyle = .inline
         apiKeyToggle.isBordered = false
         apiKeyToggle.image = NSImage(systemSymbolName: "eye",
-                                     accessibilityDescription: "显示 API Key")
+                                     accessibilityDescription: L("显示 API Key", "Show API Key"))
         apiKeyToggle.target = self
         apiKeyToggle.action = #selector(apiKeyToggleClicked)
-        apiKeyToggle.toolTip = "显示/隐藏明文"
+        apiKeyToggle.toolTip = L("显示/隐藏明文", "Show/hide plain text")
         prefixField.placeholderString = "AI"
 
         let pollFormatter = NumberFormatter()
@@ -100,11 +101,11 @@ final class SettingsWindowController: NSWindowController {
         litellmCheck.target = self
         litellmCheck.action = #selector(litellmToggled)
 
-        let pollRow = NSStackView(views: [pollField, pollStepper, smallLabel("分钟，下限 5")])
+        let pollRow = NSStackView(views: [pollField, pollStepper, smallLabel(L("分钟，下限 5", "minutes, minimum 5"))])
         pollRow.orientation = .horizontal
         pollField.widthAnchor.constraint(equalToConstant: 60).isActive = true
 
-        let addTeam = NSButton(title: "添加 Claude team…",
+        let addTeam = NSButton(title: L("添加 Claude team…", "Add Claude Team…"),
                                target: self, action: #selector(addTeamClicked))
         addTeam.controlSize = .small
         addTeamStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -127,8 +128,11 @@ final class SettingsWindowController: NSWindowController {
 
         // claude-swap 同样零配置（读 ~/.claude-swap-backup），只给状态反馈。
         swapStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        swapCheck.toolTip = "读 claude-swap（cswap）录入的账号，无需在本应用重复登录；"
-            + "和 Claude Code 目录同 org 时自动去重，目录那份优先"
+        swapCheck.toolTip = L(
+            "读 claude-swap（cswap）录入的账号，无需在本应用重复登录；"
+                + "和 Claude Code 目录同 org 时自动去重，目录那份优先",
+            "Reads accounts registered via claude-swap (cswap); no need to log in again here. "
+                + "Deduplicated automatically when sharing an org with a Claude Code directory, which takes priority")
         let swapRow = NSStackView(views: [swapCheck, swapStatus])
         swapRow.orientation = .horizontal
         swapRow.spacing = 8
@@ -158,12 +162,16 @@ final class SettingsWindowController: NSWindowController {
         apiKeyRow.orientation = .horizontal
         apiKeyRow.spacing = 6
 
+        // 「中文」「English」两项固定原文，不跟界面语言翻译。
+        languagePopup.addItems(withTitles: [L("跟随系统", "Follow System"), "中文", "English"])
+
         let grid = NSGridView(views: [
-            [gridLabel("显示来源"), sourceStack],
-            [gridLabel("网关地址"), baseURLField],
-            [gridLabel("网关 API Key"), apiKeyRow],
-            [gridLabel("轮询间隔"), pollRow],
-            [gridLabel("菜单栏前缀"), prefixField],
+            [gridLabel(L("显示来源", "Sources")), sourceStack],
+            [gridLabel(L("网关地址", "Gateway URL")), baseURLField],
+            [gridLabel(L("网关 API Key", "Gateway API Key")), apiKeyRow],
+            [gridLabel(L("轮询间隔", "Poll Interval")), pollRow],
+            [gridLabel(L("菜单栏前缀", "Menu Bar Prefix")), prefixField],
+            [gridLabel(L("界面语言", "Language")), languagePopup],
         ])
         grid.rowAlignment = .firstBaseline
         grid.column(at: 0).xPlacement = .trailing
@@ -174,14 +182,14 @@ final class SettingsWindowController: NSWindowController {
         apiKeyPlainField.widthAnchor.constraint(equalToConstant: 280).isActive = true
         prefixField.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        let reveal = NSButton(title: "在 Finder 中显示配置文件",
+        let reveal = NSButton(title: L("在 Finder 中显示配置文件", "Reveal Config File in Finder"),
                               target: self, action: #selector(revealClicked))
         reveal.bezelStyle = .inline
         reveal.controlSize = .small
 
-        let cancel = NSButton(title: "取消", target: self, action: #selector(cancelClicked))
+        let cancel = NSButton(title: L("取消", "Cancel"), target: self, action: #selector(cancelClicked))
         cancel.keyEquivalent = "\u{1b}"
-        let save = NSButton(title: "保存", target: self, action: #selector(saveClicked))
+        let save = NSButton(title: L("保存", "Save"), target: self, action: #selector(saveClicked))
         save.keyEquivalent = "\r"
 
         let buttons = NSStackView(views: [reveal, NSView(), cancel, save])
@@ -232,13 +240,16 @@ final class SettingsWindowController: NSWindowController {
 
         rebuildTeamList()
         let codexOn = CodexProvider.isLoggedIn
-        codexStatus.stringValue = codexOn ? "已登录" : "未登录（跑一次 codex 登录即可）"
+        codexStatus.stringValue = codexOn
+            ? L("已登录", "Logged in")
+            : L("未登录（跑一次 codex 登录即可）", "Not logged in (just run codex once to log in)")
         codexStatus.textColor = codexOn ? .secondaryLabelColor : .tertiaryLabelColor
 
         swapCheck.state = settings.forProvider("claude-swap").enabled ? .on : .off
         let swapCount = ClaudeSwapProvider().readAccounts().count
         swapStatus.stringValue = swapCount > 0
-            ? "已发现 \(swapCount) 个账号" : "未检测到 claude-swap 数据"
+            ? L("已发现 \(swapCount) 个账号", "Found \(swapCount) account(s)")
+            : L("未检测到 claude-swap 数据", "No claude-swap data detected")
         swapStatus.textColor = swapCount > 0 ? .secondaryLabelColor : .tertiaryLabelColor
 
         let litellm = settings.forProvider("litellm")
@@ -254,13 +265,21 @@ final class SettingsWindowController: NSWindowController {
            let cfg = LiteLLMProvider.resolveConfig(), cfg.source != .configFile {
             baseURLField.stringValue = cfg.baseURL
             apiKeyValue = cfg.apiKey
-            litellmNote.stringValue = "当前值读自 \(cfg.source.label)；点保存会写进配置文件（此后以配置文件为准）"
+            litellmNote.stringValue = String(
+                format: L("当前值读自 %@；点保存会写进配置文件（此后以配置文件为准）",
+                          "Current values read from %@; Save writes them to the config file (which then takes precedence)"),
+                cfg.source.label)
             litellmNoteRow.isHidden = false
         }
 
         pollField.integerValue = max(5, settings.pollMinutes)
         pollStepper.integerValue = pollField.integerValue
         prefixField.stringValue = settings.menuBarPrefix
+        switch settings.language {
+        case "zh": languagePopup.selectItem(at: 1)
+        case "en": languagePopup.selectItem(at: 2)
+        default:   languagePopup.selectItem(at: 0)
+        }
         litellmToggled()
     }
 
@@ -279,13 +298,16 @@ final class SettingsWindowController: NSWindowController {
         let account = UsageReader.read(dir, providerID: "claude-code")
 
         let isDefault = dir.lastPathComponent == ".claude"
-        let name = NSTextField(labelWithString: dir.lastPathComponent + (isDefault ? "（默认）" : ""))
+        let name = NSTextField(labelWithString: dir.lastPathComponent + (isDefault ? L("（默认）", " (default)") : ""))
         name.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-        if isDefault { name.toolTip = "claude 命令默认用的目录，跟着你在终端里切 team 而变" }
+        if isDefault {
+            name.toolTip = L("claude 命令默认用的目录，跟着你在终端里切 team 而变",
+                             "The directory the claude command uses by default; changes as you switch teams in the terminal")
+        }
 
         let detailText = account.isLoggedIn
             ? [account.org, account.email].compactMap { $0 }.joined(separator: " · ")
-            : "未登录"
+            : L("未登录", "Not logged in")
         let detail = smallLabel(detailText)
         detail.lineBreakMode = .byTruncatingTail
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -296,7 +318,7 @@ final class SettingsWindowController: NSWindowController {
         action.bezelStyle = .inline
         action.controlSize = .small
         action.tag = index
-        action.toolTip = "复制 alias、在 Finder 中显示、移除"
+        action.toolTip = L("复制 alias、在 Finder 中显示、移除", "Copy alias, reveal in Finder, remove")
 
         let row = NSStackView(views: [name, detail, action])
         row.orientation = .horizontal
@@ -337,7 +359,9 @@ final class SettingsWindowController: NSWindowController {
         apiKeyField.isHidden = visible
         apiKeyPlainField.isHidden = !visible
         apiKeyToggle.image = NSImage(systemSymbolName: visible ? "eye.slash" : "eye",
-                                     accessibilityDescription: visible ? "隐藏 API Key" : "显示 API Key")
+                                     accessibilityDescription: visible
+                                        ? L("隐藏 API Key", "Hide API Key")
+                                        : L("显示 API Key", "Show API Key"))
         // 正在编辑 key 时焦点跟着切过去，光标别丢在已隐藏的字段里
         if wasEditingKey {
             window?.makeFirstResponder(visible ? apiKeyPlainField : apiKeyField)
@@ -354,14 +378,15 @@ final class SettingsWindowController: NSWindowController {
     @objc private func addTeamClicked() {
         guard let window else { return }
         let alert = NSAlert()
-        alert.messageText = "添加 Claude team"
-        alert.informativeText = "起个短名（建议英文，如 work）。会打开终端让你登录一次，登录时选对应的 team。"
+        alert.messageText = L("添加 Claude team", "Add Claude Team")
+        alert.informativeText = L("起个短名（建议英文，如 work）。会打开终端让你登录一次，登录时选对应的 team。",
+                                  "Pick a short name (English recommended, e.g. work). A terminal will open for a one-time login; pick the matching team when logging in.")
         let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         nameField.placeholderString = "work"
         alert.accessoryView = nameField
         alert.window.initialFirstResponder = nameField
-        alert.addButton(withTitle: "打开终端登录")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("打开终端登录", "Open Terminal to Log In"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             self?.startTeamLogin(nameField.stringValue.trimmingCharacters(in: .whitespaces))
@@ -370,24 +395,30 @@ final class SettingsWindowController: NSWindowController {
 
     private func startTeamLogin(_ name: String) {
         guard name.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
-            setTeamStatus("名字只能用字母、数字、- 和 _")
+            setTeamStatus(L("名字只能用字母、数字、- 和 _", "Name can only contain letters, digits, - and _"))
             return
         }
         let dir = AppHome.url
             .appendingPathComponent(".claude-\(name)")
         if UsageReader.read(dir, providerID: "claude-code").isLoggedIn {
-            setTeamStatus("~/.claude-\(name) 已存在且已登录，直接就能看")
+            setTeamStatus(L("~/.claude-\(name) 已存在且已登录，直接就能看",
+                            "~/.claude-\(name) already exists and is logged in, ready to view"))
             return
         }
 
         // .command 文件 Terminal 双击即执行，不需要任何自动化权限。
         // GUI 起的 Terminal 是登录 shell，但 PATH 仍显式兜底（同 Refresher）。
+        // 提示文字会放进 shell 双引号里，英文里的引号要写成 \\" 给 shell 转义。
+        let echoIntro = L("为 team「\(name)」登录 Claude Code：跟着提示走，登录时选对应的 team。",
+                          "Log in to Claude Code for team \\\"\(name)\\\": follow the prompts and pick the matching team.")
+        let echoOutro = L("登录完成后退出（/exit）并关掉本窗口，AI Usage Bar 会自动发现。",
+                          "After logging in, exit (/exit) and close this window; AI Usage Bar will detect it automatically.")
         let script = """
         #!/bin/bash
         export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
         export CLAUDE_CONFIG_DIR="$HOME/.claude-\(name)"
-        echo "为 team「\(name)」登录 Claude Code：跟着提示走，登录时选对应的 team。"
-        echo "登录完成后退出（/exit）并关掉本窗口，AI Usage Bar 会自动发现。"
+        echo "\(echoIntro)"
+        echo "\(echoOutro)"
         claude
         """
         let scriptURL = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -398,11 +429,13 @@ final class SettingsWindowController: NSWindowController {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
         } catch {
-            setTeamStatus("准备登录脚本失败：\(error.localizedDescription)")
+            setTeamStatus(L("准备登录脚本失败：\(error.localizedDescription)",
+                            "Failed to prepare login script: \(error.localizedDescription)"))
             return
         }
         NSWorkspace.shared.open(scriptURL)
-        setTeamStatus("已打开终端，等待 ~/.claude-\(name) 登录…")
+        setTeamStatus(L("已打开终端，等待 ~/.claude-\(name) 登录…",
+                        "Terminal opened, waiting for ~/.claude-\(name) to log in…"))
         pollForLogin(name: name, dir: dir)
     }
 
@@ -415,15 +448,19 @@ final class SettingsWindowController: NSWindowController {
             let account = UsageReader.read(dir, providerID: "claude-code")
             if account.isLoggedIn {
                 timer.invalidate()
-                self.setTeamStatus("""
+                self.setTeamStatus(L("""
                 ✓ 已添加 \(account.org ?? name)。想在终端里日常用它，把这行放进 shell 配置：
                 alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/.claude-\(name) claude'
-                """)
+                """, """
+                ✓ Added \(account.org ?? name). To use it in the terminal day-to-day, add this line to your shell config:
+                alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/.claude-\(name) claude'
+                """))
                 self.rebuildTeamList()
                 self.onTeamAdded?()
             } else if attempts <= 0 {
                 timer.invalidate()
-                self.setTeamStatus("没等到登录。之后登录完成也会自动出现在菜单里，不影响。")
+                self.setTeamStatus(L("没等到登录。之后登录完成也会自动出现在菜单里，不影响。",
+                                     "Login not detected in time. It will still appear in the menu automatically once you finish logging in."))
             }
         }
     }
@@ -443,10 +480,12 @@ final class SettingsWindowController: NSWindowController {
             menu.addItem(i)
         }
         // 默认目录就是裸 `claude`，不需要 alias；也不允许从这里移除。
-        item("复制 alias 命令", #selector(copyTeamAlias(_:)), enabled: !isDefault)
-        item("在 Finder 中显示", #selector(revealTeam(_:)))
+        item(L("复制 alias 命令", "Copy alias Command"), #selector(copyTeamAlias(_:)), enabled: !isDefault)
+        item(L("在 Finder 中显示", "Reveal in Finder"), #selector(revealTeam(_:)))
         menu.addItem(.separator())
-        item(isDefault ? "移除（默认目录不可移除）" : "移除…",
+        item(isDefault
+                ? L("移除（默认目录不可移除）", "Remove (default directory cannot be removed)")
+                : L("移除…", "Remove…"),
              #selector(removeTeam(_:)), enabled: !isDefault)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
@@ -457,7 +496,7 @@ final class SettingsWindowController: NSWindowController {
         let alias = "alias claude-\(name)='CLAUDE_CONFIG_DIR=$HOME/\(dir.lastPathComponent) claude'"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(alias, forType: .string)
-        setTeamStatus("已复制：\(alias)")
+        setTeamStatus(L("已复制：\(alias)", "Copied: \(alias)"))
     }
 
     @objc private func revealTeam(_ sender: NSMenuItem) {
@@ -472,23 +511,29 @@ final class SettingsWindowController: NSWindowController {
         let account = UsageReader.read(dir, providerID: "claude-code")
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "移除 \(account.org ?? dir.lastPathComponent)？"
-        alert.informativeText = """
+        alert.messageText = L("移除 \(account.org ?? dir.lastPathComponent)？",
+                              "Remove \(account.org ?? dir.lastPathComponent)?")
+        alert.informativeText = L("""
         会把 \(dir.path) 移到废纸篓（含这个 team 的登录状态和本地会话记录）。
         之后想再显示它需要重新登录。如有终端正用这个目录跑 claude，会受影响。
-        """
-        alert.addButton(withTitle: "移到废纸篓")
-        alert.addButton(withTitle: "取消")
+        """, """
+        This moves \(dir.path) to the Trash (including this team's login state and local session history).
+        You'll need to log in again to show it later. Any terminal running claude with this directory will be affected.
+        """)
+        alert.addButton(withTitle: L("移到废纸篓", "Move to Trash"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             NSWorkspace.shared.recycle([dir]) { _, error in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if let error {
-                        self.setTeamStatus("移除失败：\(error.localizedDescription)")
+                        self.setTeamStatus(L("移除失败：\(error.localizedDescription)",
+                                             "Failed to remove: \(error.localizedDescription)"))
                         return
                     }
-                    self.setTeamStatus("已移除 \(dir.lastPathComponent)（在废纸篓里，可恢复）")
+                    self.setTeamStatus(L("已移除 \(dir.lastPathComponent)（在废纸篓里，可恢复）",
+                                         "Removed \(dir.lastPathComponent) (in the Trash, recoverable)"))
                     self.rebuildTeamList()
                     self.onTeamAdded?()      // 让菜单栏那边重读账号列表
                 }
@@ -523,11 +568,12 @@ final class SettingsWindowController: NSWindowController {
                     "apiKey": apiKeyValue.trimmingCharacters(in: .whitespaces),
                 ]],
                 pollMinutes: max(5, pollField.integerValue),
-                menuBarPrefix: prefix.isEmpty ? Settings.defaults.menuBarPrefix : prefix)
+                menuBarPrefix: prefix.isEmpty ? Settings.defaults.menuBarPrefix : prefix,
+                language: ["auto", "zh", "en"][max(0, languagePopup.indexOfSelectedItem)])
         } catch {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "保存失败"
+            alert.messageText = L("保存失败", "Save Failed")
             alert.informativeText = error.localizedDescription
             alert.runModal()
             return

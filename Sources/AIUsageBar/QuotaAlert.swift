@@ -43,18 +43,21 @@ enum QuotaAlert {
             .filter { $0.key != account.key && $0.providerID == account.providerID && $0.isLoggedIn }
             .min { ($0.tightestWindow?.percent ?? 0) < ($1.tightestWindow?.percent ?? 0) }
 
-        var body = "\(window.displayName) 已用 \(Int(window.percent.rounded()))%，重置 \(Fmt.until(window.resetsAt))"
+        var body = String(format: L("%@ 已用 %d%%，重置 %@", "%@ at %d%%, resets %@"),
+                          window.displayName, Int(window.percent.rounded()), Fmt.until(window.resetsAt))
         if let alt = alternative {
             let altName = alt.org ?? alt.label
             let altPct = Int((alt.tightestWindow?.percent ?? 0).rounded())
-            body += "\n建议切到 \(altName)（最紧窗口 \(altPct)%），Desktop 切 org 后点开原会话即可"
+            body += "\n" + String(format: L("建议切到 %@（最紧窗口 %d%%），Desktop 切 org 后点开原会话即可",
+                                            "Consider switching to %@ (tightest window %d%%) — switch org in Desktop, then reopen the session"),
+                                  altName, altPct)
         }
 
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
-            content.title = "\(name) 额度快满"
+            content.title = String(format: L("%@ 额度快满", "%@ quota almost full"), name)
             content.body = body
             content.sound = .default
             center.add(UNNotificationRequest(

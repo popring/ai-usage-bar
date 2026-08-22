@@ -58,10 +58,10 @@ enum Refresher {
 
         if let error = reply.error { return .failed(error) }
         if reply.status == 401 {
-            return .needsLogin("token 失效（401）")
+            return .needsLogin(L("token 失效（401）", "token invalid (401)"))
         }
         if reply.status == 429 {
-            return .needsLogin("登录已过期（429）")
+            return .needsLogin(L("登录已过期（429）", "login expired (429)"))
         }
         guard reply.status == 200 else {
             // 排查形状变化全靠响应体，截一段带出来。
@@ -71,11 +71,14 @@ enum Refresher {
         }
         guard let payload = reply.payload,
               let util = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
-        else { return .failed("返回不是 JSON") }
+        else { return .failed(L("返回不是 JSON", "response is not JSON")) }
         // 响应结构 = `.claude.json` 里 cachedUsageUtilization.utilization。
         // 一个额度字段都没有说明接口形状变了，别把垃圾当数据存下去。
         guard util["limits"] != nil || util["five_hour"] != nil || util["seven_day"] != nil
-        else { return .failed("返回缺额度字段（接口变了？）") }
+        else {
+            return .failed(L("返回缺额度字段（接口变了？）",
+                             "response missing quota fields (API changed?)"))
+        }
 
         do {
             let record: [String: Any] = [
@@ -87,7 +90,8 @@ enum Refresher {
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: record).write(to: file)
         } catch {
-            return .failed("缓存写不进去：\(error.localizedDescription)")
+            return .failed(L("缓存写不进去：\(error.localizedDescription)",
+                             "can't write cache: \(error.localizedDescription)"))
         }
         return .updated
     }
@@ -111,7 +115,7 @@ enum Refresher {
             semaphore.signal()
         }.resume()
         guard semaphore.wait(timeout: .now() + timeout + 5) == .success else {
-            return (0, nil, "超时（\(Int(timeout))s）")
+            return (0, nil, L("超时（\(Int(timeout))s）", "timed out (\(Int(timeout))s)"))
         }
         return (status, payload, transportError)
     }
@@ -201,21 +205,23 @@ enum Refresher {
         proc.standardOutput = out
         proc.standardError = Pipe()
         do { try proc.run() } catch {
-            return .fail("起不来 security：\(error.localizedDescription)")
+            return .fail(L("起不来 security：\(error.localizedDescription)",
+                           "can't launch security: \(error.localizedDescription)"))
         }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
 
         if proc.terminationStatus == 44 {   // errSecItemNotFound
-            return .missing("没登录过（Keychain 无凭证）")
+            return .missing(L("没登录过（Keychain 无凭证）", "Never logged in (no Keychain credentials)"))
         }
         guard proc.terminationStatus == 0 else {
-            return .fail("读 Keychain 失败（rc \(proc.terminationStatus)）")
+            return .fail(L("读 Keychain 失败（rc \(proc.terminationStatus)）",
+                           "can't read Keychain (rc \(proc.terminationStatus))"))
         }
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String
-        else { return .fail("凭证格式看不懂") }
+        else { return .fail(L("凭证格式看不懂", "unrecognized credential format")) }
         return .ok(token)
     }
 }

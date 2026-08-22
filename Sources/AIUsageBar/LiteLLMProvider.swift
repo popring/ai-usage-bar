@@ -30,8 +30,8 @@ struct LiteLLMProvider: UsageProvider {
             case configFile, environment, zshrc
             var label: String {
                 switch self {
-                case .configFile: return "配置文件"
-                case .environment: return "环境变量"
+                case .configFile: return L("配置文件", "config file")
+                case .environment: return L("环境变量", "environment variable")
                 case .zshrc: return "~/.zshrc"
                 }
             }
@@ -84,17 +84,17 @@ struct LiteLLMProvider: UsageProvider {
     private func readAccount() -> Account? {
         guard Self.resolveConfig() != nil else { return nil }   // 没配就整个不显示
 
-        var account = Account(providerID: id, localID: "key", label: "网关")
+        var account = Account(providerID: id, localID: "key", label: L("网关", "Gateway"))
         account.isLoggedIn = true
 
         guard let data = try? Data(contentsOf: Self.cacheFile),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else {
-            account.error = "还没取过，点「立即刷新」"
+            account.error = L("还没取过，点「立即刷新」", "Not fetched yet — click \"Refresh Now\"")
             return account
         }
 
-        account.org = root["alias"] as? String ?? "AI 网关"
+        account.org = root["alias"] as? String ?? L("AI 网关", "AI Gateway")
         account.fetchedAt = (root["fetchedAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
 
         let spend = root["spend"] as? Double ?? 0
@@ -123,7 +123,8 @@ struct LiteLLMProvider: UsageProvider {
         } else {
             // 没有预算上限时，只有花费没有百分比可言。
             account.extraUsage = ExtraUsage(usedMinor: Int((spend * 100).rounded()), limitMinor: 0)
-            account.error = String(format: "已花 $%.2f（未设预算上限）", spend)
+            account.error = String(
+                format: L("已花 $%.2f（未设预算上限）", "spent $%.2f (no budget cap set)"), spend)
         }
 
         return account
@@ -131,11 +132,12 @@ struct LiteLLMProvider: UsageProvider {
 
     func refresh(_ account: Account) -> RefreshResult {
         guard let cfg = Self.resolveConfig() else {
-            return .failed("没配 LITELLM_BASE_URL / LITELLM_API_KEY")
+            return .failed(L("没配 LITELLM_BASE_URL / LITELLM_API_KEY",
+                             "LITELLM_BASE_URL / LITELLM_API_KEY not set"))
         }
         let base = cfg.baseURL.hasSuffix("/") ? String(cfg.baseURL.dropLast()) : cfg.baseURL
         guard let url = URL(string: "\(base)/key/info") else {
-            return .failed("LITELLM_BASE_URL 不是合法 URL")
+            return .failed(L("LITELLM_BASE_URL 不是合法 URL", "LITELLM_BASE_URL is not a valid URL"))
         }
 
         var request = URLRequest(url: url, timeoutInterval: 20)
@@ -152,19 +154,21 @@ struct LiteLLMProvider: UsageProvider {
             semaphore.signal()
         }.resume()
         guard semaphore.wait(timeout: .now() + 25) == .success else {
-            return .failed("网关超时")
+            return .failed(L("网关超时", "gateway timed out"))
         }
         if let failure { return .failed(failure) }
-        guard status == 200 else { return .failed("网关返回 HTTP \(status)") }
+        guard status == 200 else {
+            return .failed(L("网关返回 HTTP \(status)", "gateway returned HTTP \(status)"))
+        }
         guard let payload,
               let root = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any],
               let info = root["info"] as? [String: Any]
-        else { return .failed("网关返回看不懂") }
+        else { return .failed(L("网关返回看不懂", "unrecognized gateway response")) }
 
         // 只留要用的字段落盘，别把整个响应（含权限、内部 id）写进缓存。
         let slim: [String: Any] = [
             "fetchedAt": Date().timeIntervalSince1970,
-            "alias": info["key_alias"] as? String ?? "AI 网关",
+            "alias": info["key_alias"] as? String ?? L("AI 网关", "AI Gateway"),
             "spend": info["spend"] as? Double ?? 0,
             "maxBudget": info["max_budget"] as? Double as Any,
             "duration": info["budget_duration"] as? String as Any,
@@ -177,7 +181,8 @@ struct LiteLLMProvider: UsageProvider {
                 withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: slim).write(to: Self.cacheFile)
         } catch {
-            return .failed("缓存写不进去：\(error.localizedDescription)")
+            return .failed(L("缓存写不进去：\(error.localizedDescription)",
+                             "can't write cache: \(error.localizedDescription)"))
         }
         return .updated
     }
