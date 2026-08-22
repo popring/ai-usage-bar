@@ -78,8 +78,8 @@ struct Settings {
             language: root["language"] as? String ?? defaults.language)
     }
 
-    /// 轮询默认 1 小时：点开菜单会自动刷新，后台轮询只是兜底，没必要密。
-    static let defaults = Settings(providers: [:], pollMinutes: 60, menuBarPrefix: "AI",
+    /// 轮询默认 20 分钟：点开菜单会自动刷新，后台轮询是兜底，但太稀会让菜单栏数字长期过期。
+    static let defaults = Settings(providers: [:], pollMinutes: 20, menuBarPrefix: "AI",
                                    language: "auto")
 
     // MARK: - 保存（设置面板用）
@@ -139,7 +139,7 @@ struct Settings {
         let template = zh ? """
         {
           "_说明": "改完重启 AI Usage Bar 生效。删掉某个来源的 enabled 或设为 false 即可隐藏它。language: auto=跟随系统, zh, en。",
-          "pollMinutes": 60,
+          "pollMinutes": 20,
           "menuBarPrefix": "AI",
           "language": "auto",
 
@@ -168,7 +168,7 @@ struct Settings {
         """ : """
         {
           "_note": "Restart AI Usage Bar after editing. Set a provider's enabled to false (or delete it) to hide it. language: auto = follow system, zh, en.",
-          "pollMinutes": 60,
+          "pollMinutes": 20,
           "menuBarPrefix": "AI",
           "language": "auto",
 

@@ -44,7 +44,7 @@ Behind the panel sits `~/.config/ai-usage-bar/config.json` (respects `XDG_CONFIG
 
 ```json
 {
-  "pollMinutes": 60,
+  "pollMinutes": 20,
   "menuBarPrefix": "AI",
   "language": "auto",
   "providers": {
@@ -150,7 +150,7 @@ This tool touches your credentials, so the boundaries are spelled out for easy a
 
 ## Two design trade-offs
 
-**1. Refresh has a floor.** Claude Code's `/usage` only truly refetches about every 5 minutes; calls within the window get served stale data — **with exit code 0**. So the app compares timestamps before and after a refresh and only counts it as an update when the clock actually moved. The 60-minute background poll is just a safety net — opening the menu auto-refreshes anything older than 5 minutes, so what you see is always fresh; setting pollMinutes lower than 5 has no effect.
+**1. Refresh has a floor.** Claude Code's `/usage` only truly refetches about every 5 minutes; calls within the window get served stale data — **with exit code 0**. So the app compares timestamps before and after a refresh and only counts it as an update when the clock actually moved. The 20-minute background poll is just a safety net — opening the menu auto-refreshes anything older than 5 minutes, so what you see is always fresh; setting pollMinutes lower than 5 has no effect.
 
 **2. Data age is always shown.** These are snapshots, not a live stream. Anything older than 10 minutes is marked stale. Better an honest "3m ago" than pretend real-time.
 
