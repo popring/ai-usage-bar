@@ -1,5 +1,13 @@
 import Foundation
 
+/// 所有本地文件读取的根目录。`AI_USAGE_BAR_HOME` 环境变量可整体重定向，
+/// 用于测试和截 demo 图（喂假数据）；`homeDirectoryForCurrentUser` 不认 $HOME。
+enum AppHome {
+    static let url: URL = ProcessInfo.processInfo.environment["AI_USAGE_BAR_HOME"]
+        .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser
+}
+
 /// 一个额度窗口（5 小时会话窗 / 7 天全模型窗 / 7 天单模型窗）。
 struct LimitWindow {
     let kind: String        // session | weekly_all | weekly_scoped

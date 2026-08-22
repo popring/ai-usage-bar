@@ -373,7 +373,7 @@ final class SettingsWindowController: NSWindowController {
             setTeamStatus("名字只能用字母、数字、- 和 _")
             return
         }
-        let dir = FileManager.default.homeDirectoryForCurrentUser
+        let dir = AppHome.url
             .appendingPathComponent(".claude-\(name)")
         if UsageReader.read(dir, providerID: "claude-code").isLoggedIn {
             setTeamStatus("~/.claude-\(name) 已存在且已登录，直接就能看")

@@ -66,6 +66,11 @@ enum ProviderRegistry {
     static func refresh(_ accounts: [Account],
                         completion: @escaping ([String: RefreshResult]) -> Void) {
         guard !accounts.isEmpty else { completion([:]); return }
+        // demo 模式（截图/测试喂假数据）：不发任何请求、不碰 Keychain，
+        // 否则真实用量会刷进假数据、假凭证会渲染出满屏刷新错误。
+        if ProcessInfo.processInfo.environment["AI_USAGE_BAR_DEMO"] != nil {
+            completion([:]); return
+        }
 
         DispatchQueue.global(qos: .utility).async {
             var results: [String: RefreshResult] = [:]

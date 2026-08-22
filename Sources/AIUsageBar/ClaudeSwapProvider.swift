@@ -14,7 +14,7 @@ struct ClaudeSwapProvider: UsageProvider {
     let id = "claude-swap"
     let displayName = "Claude Swap"
 
-    private static let root = FileManager.default.homeDirectoryForCurrentUser
+    private static let root = AppHome.url
         .appendingPathComponent(".claude-swap-backup")
 
     func readAccounts() -> [Account] {

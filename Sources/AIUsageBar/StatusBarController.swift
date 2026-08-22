@@ -428,7 +428,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             "echo '==> 完成。回菜单栏点「立即刷新」，本窗口可以关了'",
         ]
 
-        let file = FileManager.default.homeDirectoryForCurrentUser
+        let file = AppHome.url
             .appendingPathComponent(".cache/ai-usage-bar")
             .appendingPathComponent("relogin\(dirName).command")
         do {

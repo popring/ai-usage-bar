@@ -5,7 +5,7 @@ import Foundation
 /// 只读 `.claude.json`，不碰任何凭证（凭证在 macOS Keychain 里，本程序不需要）。
 enum UsageReader {
 
-    static let home = FileManager.default.homeDirectoryForCurrentUser
+    static let home = AppHome.url
 
     /// 发现所有配置目录：`~/.claude` 和 `~/.claude-*`。
     static func configDirs() -> [URL] {

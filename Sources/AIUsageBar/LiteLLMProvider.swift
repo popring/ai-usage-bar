@@ -11,8 +11,7 @@ struct LiteLLMProvider: UsageProvider {
     let id = "litellm"
     let displayName = "LiteLLM"
 
-    private static let cacheFile = FileManager.default
-        .homeDirectoryForCurrentUser
+    private static let cacheFile = AppHome.url
         .appendingPathComponent(".cache/ai-usage-bar/litellm.json")
 
     // MARK: - 配置
@@ -53,7 +52,7 @@ struct LiteLLMProvider: UsageProvider {
             return Config(baseURL: base, apiKey: key, source: .environment)
         }
 
-        let zshrc = FileManager.default.homeDirectoryForCurrentUser
+        let zshrc = AppHome.url
             .appendingPathComponent(".zshrc")
         guard let text = try? String(contentsOf: zshrc, encoding: .utf8) else { return nil }
 

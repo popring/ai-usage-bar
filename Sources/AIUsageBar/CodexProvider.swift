@@ -17,7 +17,7 @@ struct CodexProvider: UsageProvider {
     let id = "codex"
     let displayName = "Codex"
 
-    private static let home = FileManager.default.homeDirectoryForCurrentUser
+    private static let home = AppHome.url
     private static let authFile = home.appendingPathComponent(".codex/auth.json")
     private static let cacheFile = home.appendingPathComponent(".cache/ai-usage-bar/codex.json")
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!

@@ -19,7 +19,7 @@ final class DesktopTeamWatcher {
     /// 最近一次从 leveldb 里抓到的 org uuid；还没抓到过为 nil。
     private(set) var currentOrgUuid: String?
 
-    private let dirURL = FileManager.default.homeDirectoryForCurrentUser
+    private let dirURL = AppHome.url
         .appendingPathComponent("Library/Application Support/Claude/Local Storage/leveldb")
 
     private var dirWatcher: FileWatcher?

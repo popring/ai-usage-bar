@@ -28,7 +28,7 @@ struct Settings {
     static let path: URL = {
         let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config")
+            ?? AppHome.url.appendingPathComponent(".config")
         return base.appendingPathComponent("ai-usage-bar/config.json")
     }()
 
