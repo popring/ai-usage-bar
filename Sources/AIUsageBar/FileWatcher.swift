@@ -1,17 +1,19 @@
 import Foundation
 
-/// 盯一个文件的变化，回调在主线程。
+/// Watch one file for changes; callback on the main thread.
 ///
-/// Claude Code 写 `~/.claude.json` 是原子替换（写临时文件再 rename 过来），
-/// 所以旧 fd 上收到的是 delete/rename 而不是 write —— 收到后必须重新 open
-/// 新文件才能继续盯。文件暂时不存在（比如还没登录过）就隔段时间重试。
+/// Claude Code writes `~/.claude.json` via atomic replace (temp file + rename),
+/// so the old fd receives delete/rename instead of write — after that we must
+/// re-open the new file to keep watching. If the file doesn't exist yet (e.g.
+/// never logged in), retry periodically.
 final class FileWatcher {
     private let path: String
     private let onChange: () -> Void
     private var source: DispatchSourceFileSystemObject?
     private var pending: DispatchWorkItem?
 
-    /// Claude Code 活跃时状态文件写得很勤，攒一秒再处理，避免连环触发。
+    /// The state file is written frequently while Claude Code is active; coalesce
+    /// for a second to avoid cascading triggers.
     private static let debounce: TimeInterval = 1
     private static let retryInterval: TimeInterval = 15
 

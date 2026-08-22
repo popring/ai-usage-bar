@@ -1,9 +1,9 @@
 import AppKit
 
-/// 菜单栏应用入口。
+/// Menu bar app entry point.
 ///
-/// `.accessory` 让它不出现在 Dock 和 Cmd-Tab 里 —— 这样即使不打成 .app bundle，
-/// 直接 `swift run` 也是个正经的菜单栏程序。
+/// `.accessory` keeps it out of the Dock and Cmd-Tab — so even without a .app
+/// bundle, plain `swift run` behaves like a proper menu bar app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: StatusBarController?
 
@@ -13,8 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// `--dump` / `--dump --refresh`：不起 UI，把解析结果打到终端。
-/// 用来验证数据层和排查"菜单里数字不对"的问题。
+/// `--dump` / `--dump --refresh`: no UI, print parsed results to the terminal.
+/// For verifying the data layer and debugging "the numbers in the menu look wrong".
 func runDump(refresh: Bool) -> Never {
     if refresh {
         let targets = ProviderRegistry.readAllAccounts().filter(\.isLoggedIn)
@@ -34,7 +34,8 @@ func runDump(refresh: Bool) -> Never {
             }
             semaphore.signal()
         }
-        // refreshAll 的回调派发到主队列，这里必须转主 runloop 而不是干等，否则死锁。
+        // refreshAll's callback dispatches to the main queue; must pump the main
+        // runloop here instead of blocking, or we deadlock.
         while semaphore.wait(timeout: .now()) == .timedOut {
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
@@ -48,7 +49,8 @@ func runDump(refresh: Bool) -> Never {
         }
         print("\(account.org ?? account.label)  [\(account.label)]")
         if let email = account.email, let tier = account.seatTier {
-            // org uuid 截前 8 位够肉眼对；缺失说明状态文件太老，跟随/去重会退回按名字匹配。
+            // First 8 chars of the org uuid are enough to eyeball; missing means the
+            // state file is too old — follow/dedupe falls back to name matching.
             let uuid = account.orgUuid.map { "org \($0.prefix(8))" } ?? L("org uuid 缺失", "org uuid missing")
             print("  \(email) · \(tier) · \(uuid)")
         }
@@ -78,8 +80,9 @@ if args.contains("--dump") {
     runDump(refresh: args.contains("--refresh") || args.contains("-r"))
 }
 
-/// `--test-alert`：造一个 95% 的假账号走一遍通知链路（授权弹窗 + 横幅）。
-/// 必须从 .app bundle 里跑，`swift run` 直跑没有 bundle 会被静默跳过。
+/// `--test-alert`: fabricate a 95% account and exercise the notification chain
+/// (authorization prompt + banner). Must run from the .app bundle — under plain
+/// `swift run` there is no bundle and it's silently skipped.
 if args.contains("--test-alert") {
     var fake = Account(providerID: "claude-code", localID: "/tmp/fake", label: L("测试Team", "Test Team"))
     fake.isLoggedIn = true
@@ -91,7 +94,7 @@ if args.contains("--test-alert") {
     alt.org = L("备胎Team", "Backup Team")
     alt.windows = [LimitWindow(kind: "session", label: "", percent: 12,
                                resetsAt: nil, isActive: true)]
-    UserDefaults.standard.removeObject(forKey: "quotaAlertedKeys")   // 测试不受去重挡
+    UserDefaults.standard.removeObject(forKey: "quotaAlertedKeys")   // don't let dedupe block the test
     QuotaAlert.check(focused: fake, all: [fake, alt])
     print(L("已触发测试通知（若无横幅：检查系统设置 > 通知 > AI Usage Bar）",
             "Test notification fired (no banner? check System Settings > Notifications > AI Usage Bar)"))
@@ -99,10 +102,11 @@ if args.contains("--test-alert") {
     exit(0)
 }
 
-/// `--desktop-org`：不起 UI，盯着 Desktop 的「当前 org」快通道信号打日志。
-/// 用来验证「跟随 Desktop」为什么没跳/跳得慢。
+/// `--desktop-org`: no UI, log Desktop's "current org" fast-path signal.
+/// For debugging why "follow Desktop" didn't jump or jumped late.
 if args.contains("--desktop-org") {
-    // 输出常被重定向到文件观察，块缓冲会让日志迟迟不落盘，关掉。
+    // Output is often redirected to a file for observation; block buffering delays
+    // the log lines, so disable it.
     setvbuf(stdout, nil, _IONBF, 0)
     let watcher = DesktopTeamWatcher { uuid in
         print("\(Date()) org -> \(uuid)")

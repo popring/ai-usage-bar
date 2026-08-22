@@ -1,12 +1,12 @@
 import Foundation
 
-/// 用户配置。
+/// User configuration.
 ///
-/// 位置：`~/.config/ai-usage-bar/config.json`。首次运行会写一份带注释说明的模板，
-/// 用户改完即可 —— 不需要改代码、不需要重新编译。
+/// Location: `~/.config/ai-usage-bar/config.json`. First run writes an annotated
+/// template the user edits directly — no code changes, no recompiling.
 ///
-/// 任何和具体某个人/某家公司相关的东西（网关地址、API key、要看哪些来源）都只
-/// 存在这个文件里，**不进仓库**。
+/// Anything person- or company-specific (gateway URL, API keys, which sources to
+/// show) lives only in this file and **never enters the repo**.
 struct Settings {
 
     struct ProviderSettings {
@@ -22,11 +22,11 @@ struct Settings {
     var providers: [String: ProviderSettings]
     var pollMinutes: Int
     var menuBarPrefix: String
-    /// 界面语言："auto"（跟随系统）/ "zh" / "en"。
+    /// UI language: "auto" (follow system) / "zh" / "en".
     var language: String
 
-    /// 尊重 XDG_CONFIG_HOME（默认 ~/.config）。注意 `homeDirectoryForCurrentUser`
-    /// 不认 $HOME 环境变量，想在测试里隔离配置只能靠 XDG_CONFIG_HOME。
+    /// Respects XDG_CONFIG_HOME (default ~/.config). Note `homeDirectoryForCurrentUser`
+    /// ignores the $HOME env var, so tests can only isolate config via XDG_CONFIG_HOME.
     static let path: URL = {
         let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
@@ -34,12 +34,11 @@ struct Settings {
         return base.appendingPathComponent("ai-usage-bar/config.json")
     }()
 
-    // MARK: - 加载
+    // MARK: - Loading
 
-    /// 当前生效的配置。菜单里的「重新加载配置」会重算它，不需要重启应用。
+    /// The active configuration. "Reload Config" in the menu recomputes it — no app restart needed.
     static private(set) var shared: Settings = load()
 
-    /// 重新读盘。改完 config.json 后调用即可生效。
     @discardableResult
     static func reload() -> Settings {
         shared = load()
@@ -48,7 +47,7 @@ struct Settings {
     }
 
     private static func load() -> Settings {
-        // 放在这里而不是 app 启动回调里：--dump 这类不起 UI 的路径也要覆盖到。
+        // Done here rather than in the app-launch callback so UI-less paths like --dump are covered too.
         tightenPermissionsIfNeeded()
 
         guard let data = try? Data(contentsOf: path),
@@ -78,15 +77,17 @@ struct Settings {
             language: root["language"] as? String ?? defaults.language)
     }
 
-    /// 轮询默认 20 分钟：点开菜单会自动刷新，后台轮询是兜底，但太稀会让菜单栏数字长期过期。
+    /// Default poll: 20 min. Opening the menu refreshes anyway, so background polling is a
+    /// fallback — but polling too rarely leaves the menu-bar number stale for long stretches.
     static let defaults = Settings(providers: [:], pollMinutes: 20, menuBarPrefix: "AI",
                                    language: "auto")
 
-    // MARK: - 保存（设置面板用）
+    // MARK: - Saving (settings panel)
 
-    /// 把面板里的值合并写回 config.json，写完立即 reload。
+    /// Merge the panel's values back into config.json, then reload immediately.
     ///
-    /// 合并而不是整个重写：用户手写的 `_说明`、没被面板管理的字段都保留。
+    /// Merge rather than rewrite: the user's hand-written `_说明`/`_note` entries and
+    /// fields the panel doesn't manage are preserved.
     static func save(providerEnabled: [String: Bool],
                      providerOptions: [String: [String: String]],
                      pollMinutes: Int,
@@ -95,7 +96,7 @@ struct Settings {
         var root = (try? Data(contentsOf: path))
             .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
 
-        // 下限 5：/usage 大约 5 分钟才真的重新取数，比这更密纯属白跑。
+        // Floor of 5: /usage only re-fetches roughly every 5 minutes, so polling more often is wasted.
         root["pollMinutes"] = max(5, pollMinutes)
         root["menuBarPrefix"] = menuBarPrefix
         root["language"] = language
@@ -115,24 +116,26 @@ struct Settings {
         try FileManager.default.createDirectory(
             at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: path, options: .atomic)
-        // 原子写会生成新文件，权限得重新收一次。
+        // The atomic write creates a new file, so permissions must be tightened again.
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: path.path)
 
         reload()
     }
 
-    /// 某个来源的配置；没写过就按「启用、无选项」处理，保证开箱即用。
+    /// Settings for one provider; unconfigured providers default to enabled with no options,
+    /// so everything works out of the box.
     func forProvider(_ id: String) -> ProviderSettings {
         providers[id] ?? ProviderSettings(enabled: true, options: [:])
     }
 
-    // MARK: - 模板
+    // MARK: - Template
 
-    /// 首次运行写一份模板，用户照着填就行。已存在则不动。
+    /// Writes a template on first run for the user to fill in. No-op if the file exists.
     ///
-    /// 注意不能用 `L()`：模板在 `load()` 期间写，那时 `Settings.shared` 还没初始化完，
-    /// `L()` 读 shared 会静态初始化重入。此时也还没有配置可言，直接判系统语言。
+    /// Must not use `L()`: the template is written during `load()`, before `Settings.shared`
+    /// finishes initializing, so `L()` reading shared would re-enter static initialization.
+    /// No config exists yet anyway — check the system language directly.
     static func writeTemplateIfMissing() {
         guard !FileManager.default.fileExists(atPath: path.path) else { return }
         let zh = Locale.preferredLanguages.first?.hasPrefix("zh") ?? false
@@ -199,21 +202,21 @@ struct Settings {
             try FileManager.default.createDirectory(
                 at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
             try template.write(to: path, atomically: true, encoding: .utf8)
-            // 这个文件是要放 API key 的，别让同机其他用户读到。
+            // This file will hold API keys — keep it unreadable to other users on the machine.
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600], ofItemAtPath: path.path)
         } catch {
-            // 写不了就算了，全部走默认值，不影响使用。
+            // If the write fails, fall back to defaults; the app still works.
         }
     }
 
-    /// 用户可能手动建配置文件、或从别处拷过来，权限未必对。
-    /// 里面存着 API key，启动时收紧一次。
+    /// The user may create the config by hand or copy it from elsewhere, so permissions
+    /// may be wrong. It holds API keys — tighten once at startup.
     static func tightenPermissionsIfNeeded() {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: path.path),
               let perms = attrs[.posixPermissions] as? NSNumber,
-              perms.int16Value & 0o077 != 0            // group / other 有任何权限
+              perms.int16Value & 0o077 != 0            // group/other has any permission
         else { return }
         try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }

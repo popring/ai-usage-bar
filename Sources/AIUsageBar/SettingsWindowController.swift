@@ -1,22 +1,23 @@
 import AppKit
 
-/// 设置面板。纯代码 AppKit（本机没有完整 Xcode，用不了 xib）。
+/// Settings panel. Programmatic AppKit (no full Xcode on this machine, so no xib).
 ///
-/// 保存 = 写回 config.json（0600）→ `Settings.reload()` → 通过 `onSave` 让
-/// 状态栏那边重建定时器并刷一次。手改 JSON 依然可用，面板只是常用项的快捷入口。
+/// Save = write config.json (0600) → `Settings.reload()` → `onSave` lets the status bar
+/// rebuild its timer and refresh once. Hand-editing the JSON still works; the panel is
+/// just a shortcut for common options.
 final class SettingsWindowController: NSWindowController {
 
-    /// 保存成功后回调（Settings 已 reload 完）。
+    /// Called after a successful save (Settings already reloaded).
     var onSave: (() -> Void)?
-    /// 「添加 Claude team」检测到登录完成后回调（拿新 team 的用量）。
+    /// Called when "Add Claude team" detects a completed login (to fetch the new team's usage).
     var onTeamAdded: (() -> Void)?
 
     private let claudeCheck = NSButton(checkboxWithTitle: "Claude Code", target: nil, action: nil)
     private let codexCheck = NSButton(checkboxWithTitle: "Codex", target: nil, action: nil)
     private let litellmCheck = NSButton(checkboxWithTitle: L("LiteLLM 网关", "LiteLLM Gateway"), target: nil, action: nil)
     private let baseURLField = NSTextField()
-    // API key 的密文/明文是两个字段切着用（NSSecureTextField 自己变不了明文），
-    // 值以当前可见的那个为准，切换时互相同步。
+    // Masked/plain API key are two fields swapped in place (an NSSecureTextField can't
+    // reveal itself); the visible one holds the truth, and they sync on toggle.
     private let apiKeyField = NSSecureTextField()
     private let apiKeyPlainField = NSTextField()
     private let apiKeyToggle = NSButton()
@@ -50,8 +51,8 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// app 是 .accessory（不进 Dock），必须先 activate 窗口才会到前台，
-    /// 否则开在别的应用后面，看着像没反应。
+    /// The app is .accessory (no Dock icon): must activate first or the window opens
+    /// behind other apps and looks unresponsive.
     func show() {
         populate()
         NSApp.activate(ignoringOtherApps: true)
@@ -63,15 +64,16 @@ final class SettingsWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// 窗口是 contentRect: .zero 建的，尺寸全靠 AutoLayout 撑，实际会比内容窄一圈——
-    /// 表现为输入框顶到右边缘、焦点环被裁。每次内容变化后按 fittingSize 定一次尺寸。
+    /// The window was created with contentRect .zero and sized purely by Auto Layout,
+    /// which comes out a bit narrower than the content — fields hit the right edge and
+    /// the focus ring gets clipped. Re-size to fittingSize after every content change.
     private func fitWindow() {
         guard let window, let content = window.contentView else { return }
         content.layoutSubtreeIfNeeded()
         window.setContentSize(content.fittingSize)
     }
 
-    // MARK: - 布局
+    // MARK: - Layout
 
     private func buildContent() -> NSView {
         baseURLField.placeholderString = "https://gateway.example.com"
@@ -110,23 +112,23 @@ final class SettingsWindowController: NSWindowController {
         addTeam.controlSize = .small
         addTeamStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         addTeamStatus.textColor = .secondaryLabelColor
-        addTeamStatus.isSelectable = true            // alias 提示要能复制
+        addTeamStatus.isSelectable = true            // the alias hint must be copyable
         addTeamStatus.lineBreakMode = .byWordWrapping
-        addTeamStatus.maximumNumberOfLines = 6   // alias 那行要完整可复制，别截断
+        addTeamStatus.maximumNumberOfLines = 6   // keep the alias line intact and copyable, don't truncate
         addTeamStatus.preferredMaxLayoutWidth = 260
 
-        // 已发现的 team 列表（populate 时重建）。
+        // List of discovered teams (rebuilt in populate).
         teamsStack.orientation = .vertical
         teamsStack.alignment = .leading
         teamsStack.spacing = 3
 
-        // Codex 是零配置的（自动读 ~/.codex/auth.json），面板能给的只有状态反馈。
+        // Codex is zero-config (reads ~/.codex/auth.json automatically); the panel can only show status.
         codexStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         let codexRow = NSStackView(views: [codexCheck, codexStatus])
         codexRow.orientation = .horizontal
         codexRow.spacing = 8
 
-        // claude-swap 同样零配置（读 ~/.claude-swap-backup），只给状态反馈。
+        // claude-swap is likewise zero-config (reads ~/.claude-swap-backup); status only.
         swapStatus.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         swapCheck.toolTip = L(
             "读 claude-swap（cswap）录入的账号，无需在本应用重复登录；"
@@ -137,15 +139,17 @@ final class SettingsWindowController: NSWindowController {
         swapRow.orientation = .horizontal
         swapRow.spacing = 8
 
-        // 网关的值可能来自环境变量 / ~/.zshrc（Finder 启动的 app 读不到 shell 环境，
-        // 但 provider 会去 ~/.zshrc 捞）。populate 会把生效值回填并在这里标注来源。
+        // Gateway values may come from env vars / ~/.zshrc (a Finder-launched app can't see
+        // the shell env, but the provider digs into ~/.zshrc). populate fills in the
+        // effective values and labels their source here.
         litellmNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         litellmNote.textColor = .secondaryLabelColor
         litellmNoteRow = indented(litellmNote)
         litellmNoteRow.isHidden = true
 
-        // 「显示来源」整块收进一个竖向 stack：team 列表、add-team 按钮和状态行缩进，
-        // 表示从属于 Claude Code；状态行空着就整行隐藏，不留空隙。
+        // The whole Sources block is one vertical stack: the team list, add-team button and
+        // status row are indented to show they belong to Claude Code; an empty status row
+        // hides entirely, leaving no gap.
         addTeamStatusRow = indented(addTeamStatus)
         addTeamStatusRow.isHidden = true
         let sourceStack = NSStackView(views: [
@@ -162,7 +166,7 @@ final class SettingsWindowController: NSWindowController {
         apiKeyRow.orientation = .horizontal
         apiKeyRow.spacing = 6
 
-        // 「中文」「English」两项固定原文，不跟界面语言翻译。
+        // The "中文" / "English" items stay in their own language, never translated with the UI.
         languagePopup.addItems(withTitles: [L("跟随系统", "Follow System"), "中文", "English"])
 
         let grid = NSGridView(views: [
@@ -215,7 +219,7 @@ final class SettingsWindowController: NSWindowController {
         return label
     }
 
-    /// 包一层左缩进，表示该控件从属于上一行的勾选项（18pt ≈ 勾选框图标宽度）。
+    /// Wraps a view with a left indent to show it belongs to the checkbox above (18pt ≈ checkbox icon width).
     private func indented(_ view: NSView) -> NSStackView {
         let row = NSStackView(views: [view])
         row.orientation = .horizontal
@@ -223,16 +227,15 @@ final class SettingsWindowController: NSWindowController {
         return row
     }
 
-    /// 状态行有内容才占位，空着时整行隐藏。
     private func setTeamStatus(_ text: String) {
         addTeamStatus.stringValue = text
         addTeamStatusRow.isHidden = text.isEmpty
-        fitWindow()   // 状态行显隐会改变内容高度，窗口得跟着变，否则文案被裁
+        fitWindow()   // showing/hiding the row changes content height; resize or the text gets clipped
     }
 
-    // MARK: - 数据
+    // MARK: - Data
 
-    /// 每次打开都从当前配置重新灌一遍，别显示上次没保存的残留。
+    /// Repopulate from the current config on every open; don't show unsaved leftovers.
     private func populate() {
         let settings = Settings.shared
         claudeCheck.state = settings.forProvider("claude-code").enabled ? .on : .off
@@ -256,10 +259,11 @@ final class SettingsWindowController: NSWindowController {
         litellmCheck.state = litellm.enabled ? .on : .off
         baseURLField.stringValue = litellm.string("baseURL") ?? ""
         apiKeyValue = litellm.string("apiKey") ?? ""
-        setApiKeyVisible(false)             // 每次打开都从密文开始
+        setApiKeyVisible(false)             // always start masked
 
-        // 配置文件里没写但实际生效着（环境变量 / ~/.zshrc 捞到的）——把生效值回填
-        // 进字段并标注来源，不然面板一片空白、网关却在正常出数，谁看谁迷惑。
+        // Values absent from the config file but effective anyway (env vars / ~/.zshrc):
+        // fill them into the fields and label the source — otherwise the panel looks blank
+        // while the gateway keeps producing numbers, which is confusing.
         litellmNoteRow.isHidden = true
         if baseURLField.stringValue.isEmpty, apiKeyValue.isEmpty,
            let cfg = LiteLLMProvider.resolveConfig(), cfg.source != .configFile {
@@ -283,7 +287,7 @@ final class SettingsWindowController: NSWindowController {
         litellmToggled()
     }
 
-    /// 重建已发现的 Claude team 列表。数据源和菜单一致：~/.claude 和 ~/.claude-*。
+    /// Rebuilds the discovered Claude team list. Same data source as the menu: ~/.claude and ~/.claude-*.
     private func rebuildTeamList() {
         teamsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         teamDirs = UsageReader.configDirs()
@@ -313,7 +317,7 @@ final class SettingsWindowController: NSWindowController {
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         if !account.isLoggedIn { detail.textColor = .tertiaryLabelColor }
 
-        // 每行一个「⋯」操作菜单。用 tag 关联 teamDirs 下标。
+        // Per-row "⋯" action menu; tag links back to the teamDirs index.
         let action = NSButton(title: "⋯", target: self, action: #selector(teamActionsClicked(_:)))
         action.bezelStyle = .inline
         action.controlSize = .small
@@ -327,7 +331,7 @@ final class SettingsWindowController: NSWindowController {
         return row
     }
 
-    // MARK: - 动作
+    // MARK: - Actions
 
     @objc private func litellmToggled() {
         let on = litellmCheck.state == .on
@@ -337,7 +341,6 @@ final class SettingsWindowController: NSWindowController {
         apiKeyToggle.isEnabled = on
     }
 
-    /// API key 的当前值，读写都走可见的那个字段并保持两边同步。
     private var apiKeyValue: String {
         get { (apiKeyVisible ? apiKeyPlainField : apiKeyField).stringValue }
         set {
@@ -351,7 +354,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func setApiKeyVisible(_ visible: Bool) {
-        let current = apiKeyValue          // 先取当前值再切，编辑一半的内容不能丢
+        let current = apiKeyValue          // grab the value before toggling; don't lose half-typed input
         let wasEditingKey = apiKeyField.currentEditor() != nil
             || apiKeyPlainField.currentEditor() != nil
         apiKeyVisible = visible
@@ -362,7 +365,7 @@ final class SettingsWindowController: NSWindowController {
                                      accessibilityDescription: visible
                                         ? L("隐藏 API Key", "Hide API Key")
                                         : L("显示 API Key", "Show API Key"))
-        // 正在编辑 key 时焦点跟着切过去，光标别丢在已隐藏的字段里
+        // If the key was being edited, move focus along; don't leave the caret in a hidden field
         if wasEditingKey {
             window?.makeFirstResponder(visible ? apiKeyPlainField : apiKeyField)
         }
@@ -372,9 +375,10 @@ final class SettingsWindowController: NSWindowController {
         pollField.integerValue = pollStepper.integerValue
     }
 
-    /// 一键引导加 team：起个名 → 开终端登录 → 登录完成自动出现在菜单里。
-    /// 登录本身没法代办（浏览器 OAuth + 选 team），能自动化的只有目录、
-    /// 环境变量和「登录好了没」的检测。
+    /// Guided team add: pick a name → open Terminal to log in → appears in the menu once
+    /// logged in. The login itself can't be done for the user (browser OAuth + team
+    /// selection); all we can automate is the directory, the env var, and detecting
+    /// whether login completed.
     @objc private func addTeamClicked() {
         guard let window else { return }
         let alert = NSAlert()
@@ -406,9 +410,9 @@ final class SettingsWindowController: NSWindowController {
             return
         }
 
-        // .command 文件 Terminal 双击即执行，不需要任何自动化权限。
-        // GUI 起的 Terminal 是登录 shell，但 PATH 仍显式兜底（同 Refresher）。
-        // 提示文字会放进 shell 双引号里，英文里的引号要写成 \\" 给 shell 转义。
+        // A .command file runs on open in Terminal — no automation permission needed.
+        // A GUI-launched Terminal is a login shell, but PATH still gets an explicit fallback (same as Refresher).
+        // The prompt text goes inside shell double quotes, so quotes in the English text must be escaped as \\" for the shell.
         let echoIntro = L("为 team「\(name)」登录 Claude Code：跟着提示走，登录时选对应的 team。",
                           "Log in to Claude Code for team \\\"\(name)\\\": follow the prompts and pick the matching team.")
         let echoOutro = L("登录完成后退出（/exit）并关掉本窗口，AI Usage Bar 会自动发现。",
@@ -441,7 +445,7 @@ final class SettingsWindowController: NSWindowController {
 
     private func pollForLogin(name: String, dir: URL) {
         teamPollTimer?.invalidate()
-        var attempts = 180                            // 5s × 180 = 15 分钟
+        var attempts = 180                            // 5s × 180 = 15 minutes
         teamPollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             attempts -= 1
@@ -465,7 +469,7 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
-    // MARK: - team 行操作
+    // MARK: - Team row actions
 
     @objc private func teamActionsClicked(_ sender: NSButton) {
         guard teamDirs.indices.contains(sender.tag) else { return }
@@ -479,7 +483,7 @@ final class SettingsWindowController: NSWindowController {
             i.representedObject = dir
             menu.addItem(i)
         }
-        // 默认目录就是裸 `claude`，不需要 alias；也不允许从这里移除。
+        // The default dir is plain `claude` — no alias needed; removing it from here is also not allowed.
         item(L("复制 alias 命令", "Copy alias Command"), #selector(copyTeamAlias(_:)), enabled: !isDefault)
         item(L("在 Finder 中显示", "Reveal in Finder"), #selector(revealTeam(_:)))
         menu.addItem(.separator())
@@ -504,8 +508,8 @@ final class SettingsWindowController: NSWindowController {
         NSWorkspace.shared.activateFileViewerSelecting([dir])
     }
 
-    /// 移除 = 整个配置目录扔进废纸篓（可从废纸篓恢复）。登录态跟着目录走，
-    /// 移除后想再看这个 team 得重新登录。
+    /// Remove = move the whole config dir to the Trash (recoverable from there). Login
+    /// state lives in the dir, so showing this team again requires logging in again.
     @objc private func removeTeam(_ sender: NSMenuItem) {
         guard let dir = sender.representedObject as? URL, let window else { return }
         let account = UsageReader.read(dir, providerID: "claude-code")
@@ -535,7 +539,7 @@ final class SettingsWindowController: NSWindowController {
                     self.setTeamStatus(L("已移除 \(dir.lastPathComponent)（在废纸篓里，可恢复）",
                                          "Removed \(dir.lastPathComponent) (in the Trash, recoverable)"))
                     self.rebuildTeamList()
-                    self.onTeamAdded?()      // 让菜单栏那边重读账号列表
+                    self.onTeamAdded?()      // make the status bar re-read the account list
                 }
             }
         }
@@ -551,7 +555,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func saveClicked() {
-        // 让正在编辑的文本框先提交值。
+        // Commit any in-progress text field edits first.
         window?.makeFirstResponder(nil)
 
         let prefix = prefixField.stringValue.trimmingCharacters(in: .whitespaces)

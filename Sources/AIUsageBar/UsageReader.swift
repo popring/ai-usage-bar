@@ -1,13 +1,14 @@
 import Foundation
 
-/// 从 Claude Code 的本地状态里读出各 team 的用量。
+/// Reads per-team usage from Claude Code's local state.
 ///
-/// 只读 `.claude.json`，不碰任何凭证（凭证在 macOS Keychain 里，本程序不需要）。
+/// Only reads `.claude.json`; never touches credentials (they live in the macOS Keychain,
+/// which this app doesn't need).
 enum UsageReader {
 
     static let home = AppHome.url
 
-    /// 发现所有配置目录：`~/.claude` 和 `~/.claude-*`。
+    /// Discover all config dirs: `~/.claude` and `~/.claude-*`.
     static func configDirs() -> [URL] {
         let fm = FileManager.default
         var dirs: [URL] = []
@@ -19,7 +20,7 @@ enum UsageReader {
             at: home, includingPropertiesForKeys: nil, options: [])) ?? []
         dirs += contents
             .filter { $0.lastPathComponent.hasPrefix(".claude-") && isDir($0) }
-            // claude-swap 的备份目录不是 Claude 配置目录，别当成一个 team。
+            // claude-swap's backup dir is not a Claude config dir; don't treat it as a team.
             .filter { $0.lastPathComponent != ".claude-swap-backup" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
@@ -32,10 +33,11 @@ enum UsageReader {
         return exists && isDirectory.boolValue
     }
 
-    /// 定位某个配置目录对应的状态文件。
+    /// Locate the state file for a config dir.
     ///
-    /// 坑：默认目录 `~/.claude` 的状态文件在 **`~/.claude.json`**（家目录下），
-    /// 不在目录内部；自定义 `CLAUDE_CONFIG_DIR` 的才在目录里。两处都探。
+    /// Gotcha: for the default dir `~/.claude`, the state file is **`~/.claude.json`**
+    /// (in the home dir), not inside the dir; only custom `CLAUDE_CONFIG_DIR` setups
+    /// keep it inside. Probe both.
     static func stateFile(for configDir: URL) -> URL? {
         var candidates = [configDir.appendingPathComponent(".claude.json")]
         if configDir.lastPathComponent == ".claude" {
@@ -44,7 +46,7 @@ enum UsageReader {
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// 读一个配置目录，产出一条账号记录。
+    /// Read one config dir and produce one account record.
     static func read(_ configDir: URL, providerID: String) -> Account {
         var account = Account(
             providerID: providerID,
@@ -85,8 +87,9 @@ enum UsageReader {
             account.error = L("还没取过用量", "usage not fetched yet")
         }
 
-        // `.claude.json` 的缓存只有交互式 /usage 才更新（CLI ≥2.1.228 无头跑不动了），
-        // 主力数据来自 Refresher 直连端点的结果 —— 两边谁新用谁。
+        // The `.claude.json` cache only updates via interactive /usage (headless runs
+        // broke in CLI >=2.1.228); the primary data comes from Refresher hitting the
+        // endpoint directly — whichever side is newer wins.
         if let fresh = Refresher.cached(configDir),
            fresh.fetchedAt > (account.fetchedAt ?? .distantPast) {
             account.fetchedAt = fresh.fetchedAt
@@ -97,9 +100,10 @@ enum UsageReader {
         return account
     }
 
-    // MARK: - 解析细节
+    // MARK: - Parsing details
 
-    /// 优先用 `limits[]`（含 weekly_scoped 之类的细分），没有再回落到 five_hour / seven_day。
+    /// Prefer `limits[]` (includes breakdowns like weekly_scoped); fall back to
+    /// five_hour / seven_day when absent.
     private static func parseWindows(_ util: [String: Any]) -> [LimitWindow] {
         if let limits = util["limits"] as? [[String: Any]], !limits.isEmpty {
             return limits.compactMap { item in
@@ -139,7 +143,7 @@ enum UsageReader {
         )
     }
 
-    /// JSON 里数字有时是 Int 有时是 Double，统一取。
+    /// Numbers in the JSON are sometimes Int, sometimes Double; normalize.
     private static func number(_ any: Any?) -> Double? {
         if let d = any as? Double { return d }
         if let i = any as? Int { return Double(i) }
@@ -147,8 +151,8 @@ enum UsageReader {
         return nil
     }
 
-    /// `resets_at` 形如 "2026-08-10T06:40:00.419888+00:00"，
-    /// 小数位有 6 位，ISO8601DateFormatter 只吃 3 位，所以先截断再解析。
+    /// `resets_at` looks like "2026-08-10T06:40:00.419888+00:00" — 6 fractional
+    /// digits, but ISO8601DateFormatter only accepts 3, so truncate before parsing.
     private static func parseDate(_ any: Any?) -> Date? {
         guard let raw = any as? String else { return nil }
 
@@ -156,7 +160,7 @@ enum UsageReader {
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = iso.date(from: raw) { return d }
 
-        // 把 .419888 压成 .419 再试
+        // Trim .419888 down to .419 and retry.
         if let dot = raw.firstIndex(of: "."),
            let tzStart = raw[dot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
             let frac = raw[raw.index(after: dot)..<tzStart]

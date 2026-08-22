@@ -1,6 +1,6 @@
 import AppKit
 
-/// 菜单栏图标 + 下拉菜单。
+/// Menu bar icon and its dropdown menu.
 final class StatusBarController: NSObject, NSMenuDelegate {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -9,11 +9,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var timer: Timer?
     private var isRefreshing = false
     private var isMenuOpen = false
-    /// 上一轮刷新里出问题的账号（key → 结果），在对应账号下方就地展示。
+    /// Accounts that had problems in the last refresh (key → result), shown inline under each account.
     private var refreshIssues: [String: RefreshResult] = [:]
     private var defaultDirWatcher: FileWatcher?
     private var desktopTeamWatcher: DesktopTeamWatcher?
-    /// 上次跟随的目标，用来区分「切了 team」和普通的状态文件写入。
+    private var swapStateWatcher: FileWatcher?
+    /// Last follow target, to distinguish an actual team switch from routine state-file writes.
     private var lastFollowTargetKey: String?
 
     private lazy var settingsController: SettingsWindowController = {
@@ -26,8 +27,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     override init() {
         super.init()
         menu.delegate = self
-        // 信息行没有 action，若交给 AppKit 自动判定会被当成禁用项渲染成灰色/半透明。
-        // 关掉自动判定，由我们显式控制 enabled，颜色才正常。
+        // Info rows have no action; AppKit's auto-enabling would treat them as disabled
+        // and render them gray/translucent. Turn it off and control enabled explicitly.
         menu.autoenablesItems = false
         statusItem.menu = menu
         reload()
@@ -37,10 +38,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         watchDesktopTeam()
     }
 
-    /// 两路信号盯住「Desktop 当前在哪个 team」：
-    /// - 快通道：Desktop 自己的 Local Storage，切 org 的瞬间落盘（见 `DesktopTeamWatcher`）；
-    /// - 慢通道：默认目录状态文件 `~/.claude.json`。Desktop 和默认目录共享登录态，
-    ///   但要等内嵌 Claude Code 重新同步才改写，滞后几十秒，当兜底和启动初值。
+    /// Two signals track which team Desktop is currently on:
+    /// - Fast path: Desktop's own Local Storage, written the moment the org switches (see `DesktopTeamWatcher`).
+    /// - Slow path: the default dir's state file `~/.claude.json`. Desktop shares login state
+    ///   with the default dir, but it's only rewritten when the embedded Claude Code re-syncs —
+    ///   lags by tens of seconds; serves as fallback and initial value.
     private func watchDesktopTeam() {
         desktopTeamWatcher = DesktopTeamWatcher { [weak self] _ in
             self?.desktopSignalChanged()
@@ -50,27 +52,31 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         defaultDirWatcher = FileWatcher(path: state.path) { [weak self] in
             self?.desktopSignalChanged()
         }
+        // Third signal: cswap updates autoswitch_state.json when switching slots.
+        swapStateWatcher = FileWatcher(path: ClaudeSwapProvider.autoswitchStateFile.path) { [weak self] in
+            self?.desktopSignalChanged()
+        }
     }
 
-    /// 用来探测「跟随目标变没变」的键。
+    /// Key used to detect whether the follow target changed.
     private var followTargetKey: String? { followedAccount?.key ?? desktopOrgKey }
 
-    /// 任一信号动了。慢通道多数时候只是 Claude Code 在写用量缓存，
-    /// 顺手把新数字带出来；真正切了 team 才需要额外动作。
+    /// Any signal fired. The slow path usually just means Claude Code wrote its usage
+    /// cache — pick up the fresh numbers; only a real team switch needs extra work.
     private func desktopSignalChanged() {
         reload()
         if isMenuOpen { rebuildMenu() }
 
         guard followTargetKey != lastFollowTargetKey else { return }
         lastFollowTargetKey = followTargetKey
-        // 刚切过去的 team 数据可能是很久以前的，顺手刷一遍。
+        // The team just switched to may have very old data; refresh it.
         if followDesktop, let followed = followedAccount, followed.isStale {
             refresh()
         }
     }
 
-    /// 轮询间隔来自配置，重新加载配置后要重建定时器。
-    /// 下限 5 分钟：/usage 大约 5 分钟才真的重新取数，比这更密纯属白跑。
+    /// Poll interval comes from config; rebuild the timer after a config reload.
+    /// Floor of 5 minutes: /usage only re-fetches about every 5 minutes, so polling more often is wasted.
     private func restartTimer() {
         timer?.invalidate()
         let minutes = max(5, Settings.shared.pollMinutes)
@@ -80,15 +86,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    // MARK: - 数据
+    // MARK: - Data
 
-    /// 只重读本地状态，不发请求。
+    /// Re-reads local state only; no network requests.
     private func reload() {
         accounts = ProviderRegistry.readAllAccounts()
         updateTitle()
     }
 
-    /// 让每个来源各自刷新一遍再重读。只刷会展示的那些，藏起来的默认目录不浪费一次调用。
+    /// Ask each provider to refresh, then re-read. Only refreshes the accounts that will be
+    /// shown — no wasted call on a hidden default dir.
     private func refresh() {
         guard !isRefreshing else { return }
         reload()
@@ -110,46 +117,57 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
 
             self.reload()
-            // 正在用的 team 快满了就主动喊人，别等用户自己发现 100%。
+            // Alert proactively when the team in use is nearly full; don't wait for the user to discover 100%.
             QuotaAlert.check(focused: self.pinnedOrFollowed, all: self.visibleAccounts)
-            // 菜单开着时原地更新，别让用户对着旧数字等到下次打开。
+            // Update in place while the menu is open so the user isn't staring at stale numbers.
             if self.isMenuOpen { self.rebuildMenu() }
         }
     }
 
-    // MARK: - 菜单栏标题
+    // MARK: - Menu bar title
 
-    /// 固定了某个账号就存它的 key；nil = 自动（显示最紧张的）。
+    /// Key of the pinned account; nil = auto (show the tightest one).
     ///
-    /// 场景：一个 team 用到上限后你切去别的 team 干活，「最紧张」永远是那个
-    /// 满了的，标题就卡在 100% 没信息量了。点菜单里的账号名固定住当前在用的。
+    /// Scenario: one team hits its limit and you switch to another team to keep working —
+    /// the "tightest" is forever the maxed-out one, so the title sticks at 100% and carries
+    /// no information. Clicking an account name in the menu pins the one in use.
     private var pinnedKey: String? {
         get { UserDefaults.standard.string(forKey: "pinnedAccountKey") }
         set { UserDefaults.standard.set(newValue, forKey: "pinnedAccountKey") }
     }
 
-    /// 跟随模式：菜单栏自动固定到 Desktop（=默认目录）当前登录的 team。
-    /// 手动固定优先于跟随；找不到跟随目标（没登录默认目录）就退回自动。
+    /// Follow mode: the menu bar auto-pins to the team Desktop (= default dir) is logged into.
+    /// Manual pin beats follow; with no follow target (default dir not logged in) fall back to auto.
     private var followDesktop: Bool {
         get { UserDefaults.standard.object(forKey: "followDesktopTeam") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "followDesktopTeam") }
     }
 
-    /// Desktop 当前登录的账号（默认目录的登录态就是 Desktop 的登录态）。
+    /// The account Desktop is currently logged into (the default dir's login state is Desktop's).
     private var desktopAccount: Account? {
         accounts.first { $0.isDefaultDir && $0.isLoggedIn }
     }
 
-    /// Desktop 当前的 org，只用来探测「切没切 team」。
+    /// Desktop's current org; only used to detect team switches.
     private var desktopOrgKey: String? { desktopAccount?.orgKey }
 
-    /// 跟随模式下菜单栏应该盯住的账号。默认目录被同 org 的专用目录顶掉时，
-    /// 匹配到的是那个专用目录 —— 数据是同一份配额，无所谓哪份 cache。
+    /// The account the menu bar should track in follow mode. When the default dir is deduped
+    /// away by a dedicated dir of the same org, the match is that dedicated dir — same quota,
+    /// doesn't matter which cache.
     ///
-    /// 快通道信号优先（uuid 精确匹配）；抓不到或者那个 org 没配过 team 目录，
-    /// 退回慢通道（默认目录登录态）。
+    /// The fast-path signal wins (exact uuid match); if unavailable, or that org has no team
+    /// dir configured, fall back to the slow path (default dir login state).
     private var followedAccount: Account? {
         guard followDesktop else { return nil }
+        // cswap slot switches and Desktop org switches are two independent "in use" signals;
+        // trust whichever is newer. The slot account may be deduped away by a same-org
+        // directory, so search all accounts first, then map back to the visible one.
+        if let swapAt = ClaudeSwapProvider.lastSwitchAt,
+           swapAt > (desktopTeamWatcher?.currentOrgAt ?? .distantPast),
+           let live = accounts.first(where: { $0.isLiveSwapSlot }),
+           let hit = visibleAccounts.first(where: { $0.key == live.key || $0.sameOrg(as: live) }) {
+            return hit
+        }
         if let uuid = desktopTeamWatcher?.currentOrgUuid,
            let hit = visibleAccounts.first(where: { $0.orgUuid == uuid }) {
             return hit
@@ -158,20 +176,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return visibleAccounts.first { $0.sameOrg(as: desktop) }
     }
 
-    /// 正在关注的账号：手动固定优先，其次跟随 Desktop；都没有为 nil（自动模式）。
+    /// The account in focus: manual pin first, then Desktop follow; nil = auto mode.
     private var pinnedOrFollowed: Account? {
         (visibleAccounts.first { $0.key == pinnedKey }) ?? followedAccount
     }
 
-    /// 默认显示所有账号里最紧张的那个窗口；固定/跟随了账号就只看它。
+    /// By default show the tightest window across all accounts; if pinned/followed, only that one.
     private func updateTitle() {
-        // 固定的账号可能已退出登录或被配置关掉，找不到就退回跟随/自动。
+        // The pinned account may have logged out or been disabled in config; fall back to follow/auto.
         let pinned = visibleAccounts.first { $0.key == pinnedKey }
         let focused = pinned ?? followedAccount
         let worst = focused.map { [$0] } ?? visibleAccounts
         let window = worst.compactMap(\.tightestWindow).max { $0.percent < $1.percent }
         statusItem.button?.toolTip = pinned.map { "\(L("已固定：", "Pinned: "))\($0.org ?? $0.label)" }
-            ?? followedAccount.map { "\(L("跟随 Desktop：", "Following Desktop: "))\($0.org ?? $0.label)" }
+            ?? followedAccount.map { "\(L("跟随：", "Following: "))\($0.org ?? $0.label)" }
 
         let prefix = Settings.shared.menuBarPrefix
         let text: String
@@ -199,15 +217,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
-    // MARK: - 菜单
+    // MARK: - Menu
 
-    /// 每次点开都重建，保证时间差（"3分钟前"）是新的。
-    /// 数据超过 /usage 的刷新窗口就顺手刷一遍 —— 后台轮询默认 1 小时，
-    /// 「点开时看到的是新的」主要靠这里。
+    /// Rebuilt on every open so relative times ("3 min ago") stay fresh.
+    /// Also refreshes when data is older than /usage's refresh window — background polling
+    /// defaults to 1 hour, so "fresh numbers on open" mostly relies on this.
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
         reload()
-        // 有账号还没取过数据（cacheAge 为 nil，比如刚加的 team）也要刷。
+        // Also refresh when some account has never been fetched (cacheAge nil, e.g. a just-added team).
         let accounts = visibleAccounts
         let ages = accounts.compactMap(\.cacheAge)
         if ages.count < accounts.count || (ages.max() ?? .infinity) > Refresher.refreshWindow {
@@ -220,10 +238,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         isMenuOpen = false
     }
 
-    /// 要展示的账号。
+    /// Accounts to display.
     ///
-    /// 默认目录 `~/.claude` 跟着界面切 team 而变，经常和某个专用目录指着同一个 team。
-    /// 那种情况下把默认目录藏掉 —— 专用目录才是稳定的那份。
+    /// The default dir `~/.claude` changes as the UI switches teams and often points at the
+    /// same team as some dedicated dir. In that case hide the default dir — the dedicated
+    /// dir is the stable one.
     private var visibleAccounts: [Account] {
         let loggedIn = accounts.filter(\.isLoggedIn)
         let dedicated = loggedIn.filter {
@@ -233,8 +252,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             guard account.isDefaultDir else { return true }
             return !dedicated.contains { $0.sameOrg(as: account) }
         }
-        // claude-swap 的槽位和已登录的 Claude Code 目录经常指同一批 org。
-        // 目录那份能主动刷新，同 org 时留它；swap 只补没有目录登录态的 org。
+        // claude-swap slots and logged-in Claude Code dirs often point at the same orgs.
+        // The dir copy can actively refresh, so it wins on same org; swap only fills in
+        // orgs with no dir login.
         let fromDirs = stable.filter { $0.providerID == "claude-code" }
         return stable.filter { account in
             guard account.providerID == "claude-swap" else { return true }
@@ -251,7 +271,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             menu.addItem(info(L("先跑 claude 登录，或建 ~/.claude-<名字> 目录",
                                "Run claude to log in, or create a ~/.claude-<name> directory"), size: 11))
         } else {
-            // 多个来源时按来源分组；只有一个来源就不加这层噪音。
+            // Group by provider only when there are several; a single provider skips the noise.
             let providers = ProviderRegistry.all.filter { p in
                 shown.contains { $0.providerID == p.id }
             }
@@ -267,7 +287,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 数据年龄放全局一行 —— 各账号是一起刷新的，没必要每组重复一次。
+        // Data age as one global line — accounts refresh together, no need to repeat per group.
         if let oldest = shown.compactMap(\.cacheAge).max() {
             let stale = shown.contains { $0.isStale }
             menu.addItem(info(L("数据 ", "Data ") + Fmt.ago(oldest) + (stale ? L(" · 已过期", " · stale") : ""),
@@ -280,15 +300,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
 
-        let followItem = NSMenuItem(title: L("跟随 Desktop 当前 team", "Follow Desktop's current team"),
+        let followItem = NSMenuItem(title: L("跟随当前在用账号", "Follow the account in use"),
                                     action: #selector(followClicked), keyEquivalent: "")
         followItem.target = self
         followItem.state = followDesktop ? .on : .off
-        followItem.toolTip = L("菜单栏自动固定到 Claude Desktop（也就是默认目录 ~/.claude）"
-                                   + "当前登录的 team，切 team 秒级跟随。手动固定的账号优先。",
-                               "Pins the menu bar to whichever team Claude Desktop (i.e. the default"
-                                   + " directory ~/.claude) is logged into, following team switches within"
-                                   + " seconds. A manually pinned account takes priority.")
+        followItem.toolTip = L("菜单栏自动固定到当前在用的账号 —— Claude Code CLI（含 cswap 切换）"
+                                   + "和 Claude Desktop 的切换都会秒级跟随。手动固定的账号优先。",
+                               "Pins the menu bar to whichever account is currently in use — follows"
+                                   + " switches from Claude Code CLI (incl. cswap) and Claude Desktop"
+                                   + " within seconds. A manually pinned account takes priority.")
         menu.addItem(followItem)
 
         menu.addItem(.separator())
@@ -298,7 +318,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        // 手改 JSON 的路径依然保留（面板只覆盖常用项），所以重载入口不能少。
+        // Hand-editing the JSON is still supported (the panel only covers common options), so keep the reload entry.
         let reloadItem = NSMenuItem(title: L("重新加载配置", "Reload Config"),
                                     action: #selector(reloadConfigClicked), keyEquivalent: "l")
         reloadItem.target = self
@@ -313,14 +333,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func addAccount(_ account: Account) {
-        // 标题行。有兜底额度就顺带挂在后面，省一行。
+        // Header line; append the fallback quota to it to save a row.
         var title = account.org ?? account.label
         if let extra = account.extraUsage, extra.hasBuffer {
             title += extra.isCredits
                 ? String(format: "   %g / %g credits", extra.used, extra.limit)
                 : String(format: "   $%.2f / $%.0f", extra.used, extra.limit)
         }
-        // 点账号名 = 固定/取消固定到菜单栏（✓ 标在固定的那个上，– 标在跟随目标上）。
+        // Clicking the account name pins/unpins it to the menu bar (✓ = pinned, – = follow target).
         let header = NSMenuItem(title: title, action: #selector(pinClicked(_:)),
                                 keyEquivalent: "")
         header.target = self
@@ -328,8 +348,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         header.state = account.key == pinnedKey ? .on
             : (pinnedKey == nil && account.key == followedAccount?.key ? .mixed : .off)
         header.toolTip = followDesktop
-            ? L("点击后菜单栏只显示这个账号；再点一次恢复跟随 Desktop",
-                "Click to show only this account in the menu bar; click again to undo (back to Follow Desktop)")
+            ? L("点击后菜单栏只显示这个账号；再点一次恢复跟随",
+                "Click to show only this account in the menu bar; click again to undo (back to Follow)")
             : L("点击后菜单栏只显示这个账号；再点一次恢复自动",
                 "Click to show only this account in the menu bar; click again to undo (back to Auto)")
         header.attributedTitle = NSAttributedString(
@@ -347,8 +367,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             return
         }
 
-        // 全 0 的 team 没什么可看的，折叠成一行，细节丢进 tooltip。
-        // 固定顺序（5h → 7d 全部 → 7d 单模型 → 预算），不按用量排 —— 会跳的顺序没法逐次对比。
+        // A team at all zeros has nothing to show; collapse to one line, details in the tooltip.
+        // Fixed order (5h → 7d overall → 7d per-model → budget), not by usage — an order
+        // that jumps around can't be compared across opens.
         let windows = account.windows.sorted {
             ($0.sortRank, $0.label) < ($1.sortRank, $1.label)
         }
@@ -374,8 +395,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         addRefreshIssue(for: account)
     }
 
-    /// 上一轮刷新的问题就地挂在账号下面。登录死了的给一个可点的修复入口，
-    /// 其他失败只说原因。
+    /// Issues from the last refresh, attached under the account. Dead logins get a
+    /// clickable fix entry; other failures just state the reason.
     private func addRefreshIssue(for account: Account) {
         switch refreshIssues[account.key] {
         case .needsLogin(let message):
@@ -398,9 +419,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// 纯展示行。**必须 `isEnabled = true`** —— 否则 AppKit 会当禁用项渲染成灰色/半透明。
-    /// 菜单已关掉 autoenablesItems，所以这里的 enabled 不会被覆盖，
-    /// 而没有 action 意味着点它也不会触发任何事。
+    /// Display-only row. **Must set `isEnabled = true`** — otherwise AppKit renders it as
+    /// disabled (gray/translucent). The menu has autoenablesItems off, so this value isn't
+    /// overridden, and having no action means clicking it does nothing anyway.
     private func info(_ text: String, size: CGFloat = 12,
                       mono: Bool = false, color: NSColor = .secondaryLabelColor) -> NSMenuItem {
         let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
@@ -415,12 +436,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
-    // MARK: - 动作
+    // MARK: - Actions
 
     @objc private func refreshClicked() { refresh() }
 
-    /// 生成一个 .command 丢给 Terminal 跑 `claude auth login`。
-    /// 不走 AppleScript 控制 Terminal —— 那要多弹一次「自动化」授权框。
+    /// Writes a .command file and hands it to Terminal to run `claude auth login`.
+    /// Not AppleScript-driving Terminal — that would trigger an extra Automation permission prompt.
     @objc private func reloginClicked(_ sender: NSMenuItem) {
         guard let dirPath = sender.representedObject as? String else { return }
         let dirName = URL(fileURLWithPath: dirPath).lastPathComponent
@@ -475,13 +496,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settingsController.show()
     }
 
-    /// 改完配置不用重启。来源开关、轮询间隔、菜单栏前缀都会立刻生效。
+    /// Config changes apply without restart: provider toggles, poll interval, and menu bar prefix take effect immediately.
     @objc private func reloadConfigClicked() {
         Settings.reload()
         applyConfigChange()
     }
 
-    /// 配置变了（面板保存 / 手动重载）之后的统一善后。
+    /// Common follow-up after a config change (panel save / manual reload).
     private func applyConfigChange() {
         restartTimer()
         refreshIssues = [:]

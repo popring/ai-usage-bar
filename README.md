@@ -17,7 +17,7 @@ You subscribe to Claude Code and Codex, and your company hands you a gateway key
 ## Features
 
 - **Everything in one place**: Claude Code (multiple teams), every account managed by Claude Swap (cswap), Codex, and a self-hosted LiteLLM gateway — one menu covers them all
-- **Follows Claude Desktop**: the menu bar number automatically tracks whichever team Desktop / Claude Code is logged into, switching within seconds; you can also pin any account manually
+- **Follows the account in use**: the menu bar number automatically tracks whichever account is active — switches from Claude Code CLI (incl. claude-swap) and Claude Desktop are picked up within seconds; you can also pin any account manually
 - **cswap compatible**: if you use [claude-swap](https://github.com/realiti4/claude-swap) (cswap), there is nothing to configure — the app reads its usage cache directly, every slot account shows up in the menu, and the currently active slot is marked. Read-only; never touches its credentials
 - **Quota alerts**: a system notification fires when the account you're using approaches its limit — no more discovering it at 100%
 - **Always shows data age**: every reading is labeled with how long ago it was fetched, and anything older than 10 minutes is marked stale — better an honest "3m ago" than fake real-time
@@ -124,7 +124,7 @@ This tool touches your credentials, so the boundaries are spelled out for easy a
 |---|---|---|
 | `~/.claude.json`, `~/.claude*/.claude.json` | Usage cache and account metadata, **no credentials** | Show Claude Code quota |
 | `~/.claude-swap-backup/cache/usage.json` etc. | Per-slot usage and org metadata polled by claude-swap itself, **read-only** | Show cswap account quota |
-| `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | Regex-extracts only the `lastOrganization` org uuid; no other bytes parsed or stored | Real-time signal for "Follow Desktop's current team" |
+| `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | Regex-extracts only the `lastOrganization` org uuid; no other bytes parsed or stored | Real-time signal for the follow feature (Desktop side) |
 | `~/.codex/auth.json` | **Contains the OAuth access token** | Used solely as the `Authorization` header to ChatGPT |
 | `~/.config/ai-usage-bar/config.json` | The LiteLLM URL and key you entered | Query your own gateway |
 | Shell config (e.g. `~/.zshrc`) | Matches only the `LITELLM_BASE_URL` / `LITELLM_API_KEY` lines | Config fallback |

@@ -1,34 +1,36 @@
 import Foundation
 
-/// 所有本地文件读取的根目录。`AI_USAGE_BAR_HOME` 环境变量可整体重定向，
-/// 用于测试和截 demo 图（喂假数据）；`homeDirectoryForCurrentUser` 不认 $HOME。
+/// Root dir for all local file reads. The `AI_USAGE_BAR_HOME` env var redirects it
+/// wholesale — used for tests and demo screenshots (fake data);
+/// `homeDirectoryForCurrentUser` ignores $HOME.
 enum AppHome {
     static let url: URL = ProcessInfo.processInfo.environment["AI_USAGE_BAR_HOME"]
         .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         ?? FileManager.default.homeDirectoryForCurrentUser
 }
 
-/// 一个额度窗口（5 小时会话窗 / 7 天全模型窗 / 7 天单模型窗）。
+/// One quota window (5-hour session / 7-day all-models / 7-day per-model).
 struct LimitWindow {
     let kind: String        // session | weekly_all | weekly_scoped
-    let label: String       // 展示名，scoped 的会带模型名
+    let label: String       // display name; scoped ones carry the model name
     let percent: Double
     let resetsAt: Date?
     let isActive: Bool
 
-    /// 菜单里的固定展示顺序：短周期在前，与用量无关 —— 顺序稳定才好逐次对比。
+    /// Fixed display order in the menu: shorter windows first, regardless of usage —
+    /// a stable order makes glance-to-glance comparison possible.
     var sortRank: Int {
         switch kind {
         case "session": return 0
         case "weekly_all": return 1
         case "weekly_scoped": return 2
-        case "window": return 3       // Codex 个人版，同 rank 内按 label（5h < 7d）
+        case "window": return 3       // Codex personal; within rank, sort by label (5h < 7d)
         case "budget": return 4
         default: return 5
         }
     }
 
-    /// 菜单里空间紧张，名字要短。
+    /// Menu space is tight; keep names short.
     var displayName: String {
         switch kind {
         case "session": return "5h"
@@ -36,41 +38,45 @@ struct LimitWindow {
         case "weekly_scoped": return label.isEmpty ? L("7d 单模型", "7d model") : "7d \(label)"
         case "budget": return label.isEmpty ? L("预算", "budget")
             : L("\(label) 预算", "\(label) budget")
-        case "window": return label            // Codex 个人版，label 已经是 5h / 7d
+        case "window": return label            // Codex personal; label is already 5h / 7d
         default: return kind
         }
     }
 }
 
-/// 额外用量额度（撞到限额之后的 credits 兜底）。
+/// Extra-usage allowance (credits buffer after hitting the limit).
 struct ExtraUsage {
-    let usedMinor: Int      // 最小单位 ×100（美元→分；credits→百分之一 credit）
-    let limitMinor: Int     // 同上，0 表示没有兜底
-    /// Codex business 的 spend_control 单位是 credits，不是美元；显示时不带 $。
+    let usedMinor: Int      // minor units x100 (dollars→cents; credits→hundredths)
+    let limitMinor: Int     // same; 0 means no buffer
+    /// Codex business spend_control is denominated in credits, not dollars; render without $.
     var isCredits: Bool = false
     var used: Double { Double(usedMinor) / 100 }
     var limit: Double { Double(limitMinor) / 100 }
     var hasBuffer: Bool { limitMinor > 0 }
 }
 
-/// 一个账号（Claude Code 里 = 一个 team；其他来源可能是别的粒度）。
+/// One account (in Claude Code = one team; other providers may use a different granularity).
 struct Account {
-    /// 来源标识，见 `UsageProvider.id`。
+    /// Provider identifier, see `UsageProvider.id`.
     let providerID: String
-    /// 来源内唯一的标识。Claude Code 用配置目录路径。
+    /// Unique ID within the provider. Claude Code uses the config dir path.
     let localID: String
-    /// 界面上的短名，Claude Code 用目录名，如 `.claude-work`。
+    /// Short UI name; Claude Code uses the dir name, e.g. `.claude-work`.
     let label: String
 
-    /// 跨来源唯一键，用于回传刷新结果。
+    /// Cross-provider unique key, used to route refresh results back.
     var key: String { "\(providerID):\(localID)" }
 
-    /// Claude Code 专用：这是不是那个会跟着界面切 team 而变的默认目录。
+    /// Claude Code only: whether this is the default dir that changes as the UI switches teams.
     var isDefaultDir = false
+
+    /// claude-swap only: whether this is the slot cswap is currently switched to.
+    var isLiveSwapSlot = false
 
     var isLoggedIn = false
     var org: String?
-    /// org 的 uuid（Claude Code 的 oauthAccount 里有）。重名 org 时名字不可靠，匹配用它。
+    /// Org uuid (present in Claude Code's oauthAccount). Names are unreliable when
+    /// orgs share a name; match on this instead.
     var orgUuid: String?
     var email: String?
     var seatTier: String?
@@ -79,24 +85,26 @@ struct Account {
     var extraUsage: ExtraUsage?
     var error: String?
 
-    /// 判断两个账号是不是同一个 org 用的键，uuid 优先。只适合和自己旧值比（探测变化）；
-    /// 跨账号比较用 `sameOrg(as:)` —— 老状态文件可能缺 uuid，直接比键会误判成不同 org。
+    /// Key for "same org" checks, uuid preferred. Only safe against this account's own
+    /// previous value (change detection); for cross-account comparison use `sameOrg(as:)` —
+    /// old state files may lack the uuid, and comparing keys directly would misread that
+    /// as a different org.
     var orgKey: String? { orgUuid ?? org }
 
-    /// 是否同一个 org：两边都有 uuid 才比 uuid，否则退回名字。
+    /// Same org? Compare uuids only when both sides have one; otherwise fall back to names.
     func sameOrg(as other: Account) -> Bool {
         if let a = orgUuid, let b = other.orgUuid { return a == b }
         if let a = org, let b = other.org { return a == b }
         return false
     }
 
-    /// 数据年龄。没有数据时为 nil。
+    /// Age of the data; nil when there is none.
     var cacheAge: TimeInterval? {
         guard let fetchedAt else { return nil }
         return Date().timeIntervalSince(fetchedAt)
     }
 
-    /// 超过这个时长就认为数据过期（和 /usage 的刷新窗口对齐留一倍余量）。
+    /// Data older than this is considered stale (2x the /usage refresh window for slack).
     static let staleAfter: TimeInterval = 10 * 60
 
     var isStale: Bool {
@@ -104,13 +112,13 @@ struct Account {
         return age > Account.staleAfter
     }
 
-    /// 该账号最紧张的窗口 —— 菜单栏图标用它。
+    /// The account's tightest window — drives the menu bar icon.
     var tightestWindow: LimitWindow? {
         windows.max { $0.percent < $1.percent }
     }
 }
 
-// MARK: - 格式化
+// MARK: - Formatting
 
 enum Fmt {
     /// "3分钟前" / "3m ago"
@@ -132,7 +140,8 @@ enum Fmt {
         return L("\(Int(d / 86400))天后", "in \(Int(d / 86400))d")
     }
 
-    /// 12 格进度条。非零但不足一格时也给一格 —— 否则 4% 会显示成全空，看着像没用。
+    /// 12-cell progress bar. Non-zero but under one cell still gets one cell —
+    /// otherwise 4% renders fully empty and looks unused.
     static func bar(_ percent: Double, width: Int = 12) -> String {
         let p = min(max(percent, 0), 100)
         var filled = Int((p / 100 * Double(width)).rounded())

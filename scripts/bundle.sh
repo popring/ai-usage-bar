@@ -1,9 +1,9 @@
 #!/bin/bash
-# 把 SwiftPM 产物组装成一个可双击的 .app。
+# Assemble the SwiftPM build products into a double-clickable .app.
 #
-# 本机只有 Command Line Tools 没有完整 Xcode，用不了 xcodebuild，
-# 所以 bundle 手工拼。菜单栏应用需要的就是一个 Info.plist（LSUIElement=1
-# 让它不出现在 Dock 里）加一个可执行文件。
+# This machine only has Command Line Tools, not full Xcode, so xcodebuild is
+# unavailable and the bundle is assembled by hand. A menu bar app only needs an
+# Info.plist (LSUIElement=1 keeps it out of the Dock) plus the executable.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -14,18 +14,18 @@ VERSION="0.5.0"
 OUT="${1:-build}"
 APP="$OUT/$APP_NAME.app"
 
-echo "==> 编译 release"
+echo "==> Building release"
 swift build -c release
 
-echo "==> 组装 $APP"
+echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/AIUsageBar "$APP/Contents/MacOS/AIUsageBar"
 
-# 图标：从 docs/ 的 PNG 现场生成 .icns（sips/iconutil 都是系统自带）。
+# Icon: generate .icns on the fly from the PNG in docs/ (sips/iconutil ship with macOS).
 ICON_SRC="docs/ai-usage-bar-icon.png"
 if [ -f "$ICON_SRC" ]; then
-    echo "==> 生成图标"
+    echo "==> Generating icon"
     ICONSET="$(mktemp -d)/AppIcon.iconset"
     mkdir -p "$ICONSET"
     for size in 16 32 128 256 512; do
@@ -50,15 +50,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>LSMinimumSystemVersion</key>    <string>13.0</string>
-    <!-- 菜单栏应用：不进 Dock、不进 Cmd-Tab -->
+    <!-- Menu bar app: no Dock icon, no Cmd-Tab entry -->
     <key>LSUIElement</key>               <true/>
 </dict>
 </plist>
 PLIST
 
-# 本地自签，省得每次打开都被 Gatekeeper 拦。
-codesign --force --deep --sign - "$APP" 2>/dev/null || echo "   (自签跳过，不影响本机运行)"
+# Local ad-hoc signing so Gatekeeper doesn't block every launch.
+codesign --force --deep --sign - "$APP" 2>/dev/null || echo "   (ad-hoc signing skipped; local runs unaffected)"
 
-echo "==> 好了：$APP"
-echo "   试运行：open '$APP'"
-echo "   装到应用目录：cp -R '$APP' ~/Applications/"
+echo "==> Done: $APP"
+echo "   Try it: open '$APP'"
+echo "   Install: cp -R '$APP' ~/Applications/"

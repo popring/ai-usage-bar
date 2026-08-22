@@ -17,7 +17,7 @@
 ## 能做什么
 
 - **一处看全**：Claude Code（多个 team）、Claude Swap（cswap）的全部槽位账号、Codex、自建 LiteLLM 网关，一个菜单全覆盖
-- **跟随 Claude Desktop**：菜单栏数字自动跟随 Desktop / Claude Code 当前登录的 team，切 team 秒级跟随；也可以手动固定住任意账号
+- **跟随当前在用账号**：菜单栏数字自动跟随正在用的账号 —— Claude Code CLI（含 claude-swap 切换）和 Claude Desktop 的切换都秒级跟随；也可以手动固定住任意账号
 - **兼容 cswap**：装了 [claude-swap](https://github.com/realiti4/claude-swap)（cswap）的用户零配置 —— 直接读它的用量缓存，所有槽位账号自动出现在菜单里，当前切到的槽位带「在用」标记；只读，不碰它的凭证
 - **额度告警**：正在用的账号快到上限时发系统通知，不用等到 100% 才发现
 - **永远知道数据多新**：每份数据都标注「多久之前取的」，超过 10 分钟标「已过期」—— 宁可让你看见「3 分钟前」，也不假装实时
@@ -124,7 +124,7 @@ token 过期时（401）会自动跑一次 `codex doctor` —— 它用 refresh_
 |---|---|---|
 | `~/.claude.json`、`~/.claude*/.claude.json` | 用量缓存与账号元信息，**不含凭证** | 展示 Claude Code 额度 |
 | `~/.claude-swap-backup/cache/usage.json` 等 | claude-swap 自己轮询到的各槽位用量与 org 元信息，**只读** | 展示 cswap 账号额度 |
-| `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | 只正则抓 `lastOrganization` 的 org uuid，其余字节不解析不存储 | 「跟随 Desktop 当前 team」的实时信号 |
+| `~/Library/Application Support/Claude/Local Storage/leveldb/*.log` | 只正则抓 `lastOrganization` 的 org uuid，其余字节不解析不存储 | 跟随功能（Desktop 侧）的实时信号 |
 | `~/.codex/auth.json` | **含 OAuth access token** | 仅用作请求 ChatGPT 的 `Authorization` 头 |
 | `~/.config/ai-usage-bar/config.json` | 你填的 LiteLLM 地址与 key | 请求你自己的网关 |
 | shell 配置（如 `~/.zshrc`） | 只匹配 `LITELLM_BASE_URL` / `LITELLM_API_KEY` 两行 | 配置回退 |

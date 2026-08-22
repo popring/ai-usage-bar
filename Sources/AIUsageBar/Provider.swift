@@ -1,43 +1,46 @@
 import Foundation
 
-/// 一个额度来源。
+/// One quota source.
 ///
-/// 目前只有 Claude Code，但后面要接 Codex 和自建 AI 网关，
-/// 所以数据获取全部走这层，UI 只认 `Account`，不认具体是谁家的。
+/// Only Claude Code today, but Codex and a self-hosted AI gateway are coming,
+/// so all data acquisition goes through this layer — the UI only knows `Account`,
+/// never whose data it is.
 ///
-/// 加一个新来源要做的事：
-///   1. 写个类型实现本协议
-///   2. 塞进 `ProviderRegistry.all`
-/// UI 和刷新调度都不用改。
+/// To add a new source:
+///   1. Implement this protocol
+///   2. Add it to `ProviderRegistry.all`
+/// No changes to the UI or refresh scheduling.
 protocol UsageProvider {
-    /// 稳定标识，用于把账号路由回它的来源。
+    /// Stable identifier, used to route accounts back to their source.
     var id: String { get }
 
-    /// 菜单里的分组标题。只有一个来源时不显示。
+    /// Section title in the menu. Hidden when there is only one source.
     var displayName: String { get }
 
-    /// 读本地状态，**不发网络请求**。菜单每次打开都会调，必须快。
+    /// Read local state — **no network requests**. Called every time the menu
+    /// opens; must be fast.
     func readAccounts() -> [Account]
 
-    /// 刷新一个账号。**同步阻塞**，调度层负责放后台并发。
+    /// Refresh one account. **Synchronous/blocking**; the scheduler runs it on a
+    /// background queue.
     func refresh(_ account: Account) -> RefreshResult
 }
 
 enum RefreshResult {
     case updated
-    /// 命中来源自己的刷新窗口，服务端沿用了旧数据。
+    /// Hit the source's own refresh window; the server kept the old data.
     case notYet(age: TimeInterval)
     case failed(String)
-    /// 登录态已死（过期/被拒/没登录过），重试救不回来，得用户重新登录。
-    /// UI 对它给引导动作，普通 failed 只展示原因。
+    /// Login state is dead (expired/revoked/never logged in) — retrying won't help,
+    /// the user must re-login. The UI offers a guided action for this; plain
+    /// failed only shows the reason.
     case needsLogin(String)
-    /// 该来源不支持主动刷新（比如网关是被动推的）。
+    /// Source doesn't support manual refresh (e.g. a gateway that pushes passively).
     case notSupported
 }
 
-/// 所有来源。加新来源只动这里。
+/// All sources. Adding a new one only touches this.
 enum ProviderRegistry {
-    /// 全部已实现的来源。加新来源只动这里。
     private static let registered: [UsageProvider] = [
         ClaudeCodeProvider(),
         ClaudeSwapProvider(),
@@ -45,10 +48,11 @@ enum ProviderRegistry {
         LiteLLMProvider(),
     ]
 
-    /// 配置里启用了的来源。用户可以在 config.json 里关掉不想看的。
+    /// Sources enabled in config. Users can turn off ones they don't want in config.json.
     ///
-    /// 每次都重算（而不是 `static let`）—— 否则「重新加载配置」改不动来源开关，
-    /// 得重启应用才生效。来源就个位数，这点开销无所谓。
+    /// Recomputed every time (not `static let`) — otherwise "reload config" can't
+    /// change the source toggles without restarting the app. There are only a
+    /// handful of sources, so the cost is negligible.
     static var all: [UsageProvider] {
         registered.filter { Settings.shared.forProvider($0.id).enabled }
     }
@@ -57,17 +61,18 @@ enum ProviderRegistry {
         all.first { $0.id == id }
     }
 
-    /// 读全部来源的账号。
     static func readAllAccounts() -> [Account] {
         all.flatMap { $0.readAccounts() }
     }
 
-    /// 并行刷新给定账号（可以跨来源），回调在主线程。
+    /// Refresh the given accounts in parallel (may span sources); callback on the
+    /// main thread.
     static func refresh(_ accounts: [Account],
                         completion: @escaping ([String: RefreshResult]) -> Void) {
         guard !accounts.isEmpty else { completion([:]); return }
-        // demo 模式（截图/测试喂假数据）：不发任何请求、不碰 Keychain，
-        // 否则真实用量会刷进假数据、假凭证会渲染出满屏刷新错误。
+        // Demo mode (fake data for screenshots/tests): send no requests, don't touch
+        // the Keychain — otherwise real usage would overwrite the fake data and fake
+        // credentials would render a screenful of refresh errors.
         if ProcessInfo.processInfo.environment["AI_USAGE_BAR_DEMO"] != nil {
             completion([:]); return
         }

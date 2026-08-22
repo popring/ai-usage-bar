@@ -1,24 +1,27 @@
 import Foundation
 import UserNotifications
 
-/// 额度预警：正在用的 team 快满时弹系统通知，并推荐余量最松的 team。
+/// Quota alert: system notification when the team in use is nearly full, plus a
+/// recommendation of the team with the most headroom.
 ///
-/// 配合 Desktop 索引池子（Claude多Team切换-方案-2026-08-13）：收到通知后
-/// 在 Desktop 里切 org、点开同一个会话就完成续命 —— 这是"无缝切换"里
-/// 能自动化的部分；真正替用户点切换器没有受支持的接口，不做。
+/// Pairs with a Desktop-indexed team pool:
+/// after the notification, switch orgs in Desktop and reopen the same conversation
+/// to keep going — that's the automatable part of "seamless switching"; actually
+/// clicking the switcher for the user has no supported API, so we don't.
 enum QuotaAlert {
 
-    /// 超过这个百分比就该提醒了。
-    /// ponytail: 阈值写死 90，真有再调的需求再进设置面板。
+    /// Alert above this percentage.
+    /// ponytail: hardcoded at 90; add a settings knob only if someone actually needs it.
     static let threshold: Double = 90
 
-    /// 每个（账号+窗口+重置时间）只报一次，窗口重置后自然解锁再报。
+    /// One alert per (account + window + reset time); unlocks naturally after the
+    /// window resets.
     private static let alertedKey = "quotaAlertedKeys"
 
-    /// 刷新完成后调用。`focused` = 正在用的账号（跟随/固定的那个），
-    /// nil 时看全体里最紧的 —— 反正只对越线的报。
+    /// Call after a refresh completes. `focused` = the account in use (followed or
+    /// pinned); nil means check everyone's tightest — only over-threshold ones alert anyway.
     static func check(focused: Account?, all: [Account]) {
-        // swift run 直跑（无 bundle）时 UNUserNotificationCenter 会崩，跳过。
+        // Under plain `swift run` (no bundle) UNUserNotificationCenter crashes; skip.
         guard Bundle.main.bundleIdentifier != nil else { return }
 
         let watched = focused.map { [$0] } ?? all
@@ -38,7 +41,8 @@ enum QuotaAlert {
     private static func notify(account: Account, window: LimitWindow, all: [Account]) {
         let name = account.org ?? account.label
 
-        // 推荐余量最松的其他账号（同来源、已登录、没在焦点上的）。
+        // Recommend the other account with the most headroom (same source, logged
+        // in, not the focused one).
         let alternative = all
             .filter { $0.key != account.key && $0.providerID == account.providerID && $0.isLoggedIn }
             .min { ($0.tightestWindow?.percent ?? 0) < ($1.tightestWindow?.percent ?? 0) }

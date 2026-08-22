@@ -1,15 +1,15 @@
 import Foundation
 
-/// claude-swap（cswap，多账号自动切换工具）里录入的各个 Claude team。
+/// Claude teams registered in claude-swap (cswap, a multi-account auto-switcher).
 ///
-/// 直接吃它的产物，不需要在本应用重复登录：
-/// - `~/.claude-swap-backup/cache/usage.json`：它自己轮询（默认约 10 分钟）
-///   得到的各账号 5h / 7d / 单模型窗口用量
-/// - `~/.claude-swap-backup/configs/.claude-config-<槽位>-<邮箱>.json`：
-///   各账号的完整 Claude 配置备份，从中取 org 名 / seatTier
+/// Consumes its output directly — no need to log in again in this app:
+/// - `~/.claude-swap-backup/cache/usage.json`: 5h / 7d / per-model window usage
+///   per account, from cswap's own polling (roughly every 10 minutes by default)
+/// - `~/.claude-swap-backup/configs/.claude-config-<slot>-<email>.json`:
+///   full Claude config backup per account, source of org name / seatTier
 ///
-/// 只读，不碰它的凭证与状态；刷新节奏由 claude-swap 自己控制，
-/// 本应用没有可主动刷的口（refresh 返回 notSupported）。
+/// Read-only; never touches its credentials or state. Refresh cadence is
+/// claude-swap's own — this app has no hook to trigger one (refresh returns notSupported).
 struct ClaudeSwapProvider: UsageProvider {
     let id = "claude-swap"
     let displayName = "Claude Swap"
@@ -22,7 +22,7 @@ struct ClaudeSwapProvider: UsageProvider {
         guard let data = try? Data(contentsOf: cache),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let slots = json["accounts"] as? [String: [String: Any]]
-        else { return [] }          // 没装 / 没跑过 claude-swap 就整个不显示
+        else { return [] }          // claude-swap not installed / never run: hide entirely
 
         let liveSlot = Self.liveSlot()
         let profiles = Self.configProfiles()
@@ -34,6 +34,7 @@ struct ClaudeSwapProvider: UsageProvider {
                 var account = Account(providerID: id, localID: slot,
                                       label: L("槽位 \(slot)", "Slot \(slot)"))
                 account.isLoggedIn = true
+                account.isLiveSwapSlot = slot == liveSlot
                 account.email = raw["email"] as? String
                 account.orgUuid = raw["organizationUuid"] as? String
                 let profile = account.orgUuid.flatMap { profiles[$0] }
@@ -51,13 +52,14 @@ struct ClaudeSwapProvider: UsageProvider {
             }
     }
 
-    /// claude-swap 自己轮询，这里没有可主动刷的口。
+    /// claude-swap polls on its own; there is no hook to trigger a refresh here.
     func refresh(_ account: Account) -> RefreshResult { .notSupported }
 
-    // MARK: - 解析细节
+    // MARK: - Parsing details
 
-    /// usage.json 的窗口字段 → 统一的 LimitWindow。
-    /// `isLive` = 该槽位是 claude-swap 当前切到的那个，标在 5h 窗上当「在用」记号。
+    /// usage.json window fields → unified LimitWindow.
+    /// `isLive` = this slot is the one claude-swap is currently on; marked on the
+    /// 5h window as the "in use" indicator.
     private static func parseWindows(_ good: [String: Any], isLive: Bool) -> [LimitWindow] {
         var windows: [LimitWindow] = []
         if let w = good["five_hour"] as? [String: Any] {
@@ -85,11 +87,23 @@ struct ClaudeSwapProvider: UsageProvider {
         return windows
     }
 
-    /// claude-swap 当前切到的槽位（autoswitch_state.json 的 lastSwitchTo，
-    /// 新版本写字符串、老字段是数字，两种都认）。
+    /// cswap's switch-state file. Exposed because the follow logic needs to watch it
+    /// and compare its timestamp.
+    static var autoswitchStateFile: URL { root.appendingPathComponent("autoswitch_state.json") }
+
+    /// When the last switch happened; compared against Desktop's org-switch signal
+    /// to decide which is newer.
+    static var lastSwitchAt: Date? {
+        guard let data = try? Data(contentsOf: autoswitchStateFile),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let ts = json["lastSwitchAt"] as? Double else { return nil }
+        return Date(timeIntervalSince1970: ts)
+    }
+
+    /// The slot claude-swap is currently on (autoswitch_state.json's lastSwitchTo;
+    /// new versions write a string, the old field was a number — accept both).
     private static func liveSlot() -> String? {
-        let file = root.appendingPathComponent("autoswitch_state.json")
-        guard let data = try? Data(contentsOf: file),
+        guard let data = try? Data(contentsOf: autoswitchStateFile),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
         if let s = json["lastSwitchTo"] as? String { return s }
@@ -97,8 +111,8 @@ struct ClaudeSwapProvider: UsageProvider {
         return nil
     }
 
-    /// 配置备份里的 org 展示信息，按 organizationUuid 索引。
-    /// usage.json 里只有 uuid 和邮箱，org 名得从这里补。
+    /// Org display info from the config backups, keyed by organizationUuid.
+    /// usage.json only has the uuid and email; org names must be filled from here.
     private static func configProfiles() -> [String: (orgName: String?, seatTier: String?)] {
         let dir = root.appendingPathComponent("configs")
         let files = (try? FileManager.default.contentsOfDirectory(

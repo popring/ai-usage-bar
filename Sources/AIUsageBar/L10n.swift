@@ -1,13 +1,16 @@
 import Foundation
 
-/// 界面语言。默认跟随系统，config.json 的 `"language"`（"auto" / "zh" / "en"）可强制指定。
+/// UI language. Follows the system by default; config.json's `"language"`
+/// ("auto" / "zh" / "en") can force it.
 ///
-/// 不走 Localizable.strings 资源包 —— .app 是 bundle.sh 手工拼的，资源打包一环容易脆；
-/// 文案就地写两种语言（`L("中文", "English")`），加语言时再考虑上资源包。
+/// No Localizable.strings bundle — the .app is hand-assembled by bundle.sh and the
+/// resource-packing step is fragile; strings are written inline in both languages
+/// (`L("中文", "English")`). Revisit a resource bundle if more languages are added.
 enum L10n {
     private(set) static var isZh: Bool = resolve()
 
-    /// 「重新加载配置」后调用，语言改动即时生效（菜单每次打开都重建）。
+    /// Called after "reload config" so a language change takes effect immediately
+    /// (the menu is rebuilt on every open).
     static func reload() { isZh = resolve() }
 
     private static func resolve() -> Bool {
@@ -19,5 +22,6 @@ enum L10n {
     }
 }
 
-/// 内联双语文案。只包用户可见的字符串，内部 key / id 不走这里。
+/// Inline bilingual copy. User-visible strings only; internal keys/ids don't go
+/// through this.
 func L(_ zh: String, _ en: String) -> String { L10n.isZh ? zh : en }

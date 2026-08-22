@@ -1,12 +1,14 @@
 import Foundation
 
-/// LiteLLM 网关（OpenAI 兼容的自建 AI 网关）的预算余额。
+/// Budget balance for a LiteLLM gateway (self-hosted, OpenAI-compatible AI gateway).
 ///
-/// 数据来自 LiteLLM 的 `GET /key/info`，返回 `spend` / `max_budget` /
-/// `budget_duration` / `budget_reset_at`。这是网关自己的公开接口，不是私有口。
+/// Data comes from LiteLLM's `GET /key/info`, which returns `spend` / `max_budget` /
+/// `budget_duration` / `budget_reset_at`. This is the gateway's public API, not a
+/// private endpoint.
 ///
-/// 与 Claude Code 那条不同：这里 **读是网络请求**，所以 `refresh()` 拉一次并写本地
-/// 缓存，`readAccounts()` 只读缓存 —— 保证菜单打开时不卡在网络上。
+/// Unlike the Claude Code provider, **reading here is a network request**, so
+/// `refresh()` fetches once and writes a local cache while `readAccounts()` only reads
+/// the cache — opening the menu never blocks on the network.
 struct LiteLLMProvider: UsageProvider {
     let id = "litellm"
     let displayName = "LiteLLM"
@@ -14,16 +16,17 @@ struct LiteLLMProvider: UsageProvider {
     private static let cacheFile = AppHome.url
         .appendingPathComponent(".cache/ai-usage-bar/litellm.json")
 
-    // MARK: - 配置
+    // MARK: - Configuration
 
-    /// base URL 与 API key 的来源，按优先级。
+    /// Sources for the base URL and API key, in priority order.
     ///
-    /// 从 Finder 启动的 .app **拿不到 shell 环境变量**，所以必须能从 `~/.zshrc`
-    /// 里把那两个 export 捞出来，否则装成 app 之后就没数据了。
+    /// An .app launched from Finder **gets no shell environment variables**, so we must
+    /// be able to fish the two exports out of `~/.zshrc` — otherwise the packaged app
+    /// would show no data.
     struct Config {
         let baseURL: String
         let apiKey: String
-        /// 值是从哪读到的 —— 设置面板要据此提示用户。
+        /// Where the values came from — the settings panel surfaces this to the user.
         let source: Source
 
         enum Source {
@@ -39,13 +42,13 @@ struct LiteLLMProvider: UsageProvider {
     }
 
     static func resolveConfig() -> Config? {
-        // 1) 配置文件优先 —— 这是给普通用户的正经入口
+        // 1) Config file first — the proper entry point for regular users
         let settings = Settings.shared.forProvider("litellm")
         if let base = settings.string("baseURL"), let key = settings.string("apiKey") {
             return Config(baseURL: base, apiKey: key, source: .configFile)
         }
 
-        // 2) 环境变量
+        // 2) Environment variables
         let env = ProcessInfo.processInfo.environment
         if let base = env["LITELLM_BASE_URL"], let key = env["LITELLM_API_KEY"],
            !base.isEmpty, !key.isEmpty {
@@ -59,7 +62,7 @@ struct LiteLLMProvider: UsageProvider {
         var found: [String: String] = [:]
         for line in text.split(separator: "\n") {
             let s = line.trimmingCharacters(in: .whitespaces)
-            guard !s.hasPrefix("#") else { continue }          // 注释掉的不算
+            guard !s.hasPrefix("#") else { continue }          // skip commented-out lines
             for name in ["LITELLM_BASE_URL", "LITELLM_API_KEY"] where found[name] == nil {
                 guard let r = s.range(of: "\(name)=") else { continue }
                 var value = String(s[r.upperBound...])
@@ -82,7 +85,7 @@ struct LiteLLMProvider: UsageProvider {
     }
 
     private func readAccount() -> Account? {
-        guard Self.resolveConfig() != nil else { return nil }   // 没配就整个不显示
+        guard Self.resolveConfig() != nil else { return nil }   // unconfigured: hide entirely
 
         var account = Account(providerID: id, localID: "key", label: L("网关", "Gateway"))
         account.isLoggedIn = true
@@ -121,7 +124,7 @@ struct LiteLLMProvider: UsageProvider {
                 resetsAt: resets,
                 isActive: true)]
         } else {
-            // 没有预算上限时，只有花费没有百分比可言。
+            // With no budget cap there's only spend — no percentage to compute.
             account.extraUsage = ExtraUsage(usedMinor: Int((spend * 100).rounded()), limitMinor: 0)
             account.error = String(
                 format: L("已花 $%.2f（未设预算上限）", "spent $%.2f (no budget cap set)"), spend)
@@ -165,7 +168,7 @@ struct LiteLLMProvider: UsageProvider {
               let info = root["info"] as? [String: Any]
         else { return .failed(L("网关返回看不懂", "unrecognized gateway response")) }
 
-        // 只留要用的字段落盘，别把整个响应（含权限、内部 id）写进缓存。
+        // Persist only the fields we use — not the whole response (permissions, internal ids).
         let slim: [String: Any] = [
             "fetchedAt": Date().timeIntervalSince1970,
             "alias": info["key_alias"] as? String ?? L("AI 网关", "AI Gateway"),

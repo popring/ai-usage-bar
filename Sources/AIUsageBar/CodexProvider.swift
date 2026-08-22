@@ -1,18 +1,20 @@
 import Foundation
 
-/// Codex（OpenAI）额度。
+/// Codex (OpenAI) quota.
 ///
-/// 数据来自 `GET https://chatgpt.com/backend-api/wham/usage`，用 `~/.codex/auth.json`
-/// 里的 ChatGPT OAuth access token 认证 —— 和 Codex CLI 自己用的是同一个凭证、同一个口。
+/// Data comes from `GET https://chatgpt.com/backend-api/wham/usage`, authenticated with
+/// the ChatGPT OAuth access token in `~/.codex/auth.json` — the same credential and
+/// endpoint the Codex CLI itself uses.
 ///
-/// **这是未公开接口**，OpenAI 随时可能改。改动只会波及本文件。
+/// **This is an undocumented API** — OpenAI may change it at any time. Breakage stays
+/// contained to this file.
 ///
-/// 计划类型决定了额度长在哪：
-///   - 个人版（Plus/Pro）：`rate_limit` 里的 primary/secondary 百分比窗口
-///   - **business / team：`spend_control.individual_limit` 的 credits 额度（不是美元）**，
-///     `rate_limit` 和 `credits` 都是空的
-/// 本地 session rollout 文件只记了 `rate_limits`，所以在 business 计划下看着像没数据，
-/// 其实是记错了地方 —— 必须打这个接口才拿得到。
+/// Where the quota lives depends on the plan:
+///   - Personal (Plus/Pro): primary/secondary percentage windows under `rate_limit`
+///   - **business/team: a credits quota (not dollars) under `spend_control.individual_limit`**,
+///     with `rate_limit` and `credits` both empty
+/// Local session rollout files only record `rate_limits`, so business plans look like they
+/// have no data — it's just recorded in the wrong place; this endpoint is the only way to get it.
 struct CodexProvider: UsageProvider {
     let id = "codex"
     let displayName = "Codex"
@@ -22,7 +24,7 @@ struct CodexProvider: UsageProvider {
     private static let cacheFile = home.appendingPathComponent(".cache/ai-usage-bar/codex.json")
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
-    /// 设置面板显示登录状态用。判断标准和 readAccounts 一致：auth.json 存在即算。
+    /// Login status for the settings panel. Same criterion as readAccounts: auth.json exists.
     static var isLoggedIn: Bool {
         FileManager.default.fileExists(atPath: authFile.path)
     }
@@ -49,7 +51,7 @@ struct CodexProvider: UsageProvider {
         account.seatTier = plan
         account.fetchedAt = (root["fetchedAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
 
-        // business / team：credits 额度
+        // business/team: credits quota
         if let used = root["spendUsed"] as? Double, let limit = root["spendLimit"] as? Double,
            limit > 0 {
             account.extraUsage = ExtraUsage(usedMinor: Int((used * 100).rounded()),
@@ -57,14 +59,14 @@ struct CodexProvider: UsageProvider {
                                             isCredits: true)
             account.windows = [LimitWindow(
                 kind: "budget",
-                label: "",          // 留空，显示成「预算」；带 label 会变成「X 预算」
+                label: "",          // empty renders as "Budget"; a label would render as "X Budget"
 
                 percent: used / limit * 100,
                 resetsAt: (root["spendResetAt"] as? Double).map { Date(timeIntervalSince1970: $0) },
                 isActive: true)]
         }
 
-        // 个人版（Plus/Pro）：百分比窗口。两种计划只会命中一种，直接追加即可。
+        // Personal (Plus/Pro): percentage windows. Only one plan type ever matches, so appending is fine.
         if let windows = root["windows"] as? [[String: Any]] {
             account.windows += windows.compactMap { w in
                 guard let name = w["name"] as? String, let pct = w["percent"] as? Double
@@ -89,8 +91,9 @@ struct CodexProvider: UsageProvider {
         case .success(let json):
             return persist(json)
         case .failure(.unauthorized):
-            // access token 过期了。`codex doctor` 会用 refresh_token 换一个新的
-            // 并写回 auth.json —— 比自己走 OAuth 刷新流程安全，也不动用户的登录态。
+            // Access token expired. `codex doctor` exchanges the refresh_token for a new
+            // one and writes it back to auth.json — safer than running the OAuth refresh
+            // flow ourselves, and it doesn't touch the user's login state.
             guard refreshToken() else {
                 return .failed(L("token 过期，且刷新失败（试试跑一次 codex）",
                                  "token expired, and refresh failed (try running codex once)"))
@@ -104,7 +107,7 @@ struct CodexProvider: UsageProvider {
         }
     }
 
-    // MARK: - 细节
+    // MARK: - Details
 
     private enum FetchError: Error {
         case noAuth, unauthorized, http(Int), transport(String), badPayload
@@ -156,7 +159,7 @@ struct CodexProvider: UsageProvider {
         return .success(root)
     }
 
-    /// JSON 里数字可能是 Int / Double / 字符串，统一取。
+    /// JSON numbers may arrive as Int / Double / String; normalize.
     private static func number(_ any: Any?) -> Double? {
         if let d = any as? Double { return d }
         if let i = any as? Int { return Double(i) }
@@ -164,8 +167,8 @@ struct CodexProvider: UsageProvider {
         return nil
     }
 
-    /// 用窗口时长推一个好读的名字（300 分钟 → 5h，10080 → 7d），
-    /// 推不出来就退回 primary / secondary。
+    /// Derive a readable name from the window length (300 minutes → 5h, 10080 → 7d),
+    /// falling back to primary/secondary when it can't be derived.
     private static func windowLabel(_ window: [String: Any], fallback: String) -> String {
         guard let minutes = number(window["window_minutes"] ?? window["window_size_minutes"]),
               minutes > 0 else { return fallback }
@@ -174,8 +177,9 @@ struct CodexProvider: UsageProvider {
         return "\(Int(minutes / 1440))d"
     }
 
-    /// 跑 `codex doctor` 换一个新 access token。它会把结果写回 auth.json。
-    /// 走登录 shell，因为 codex 常装在 fnm/nvm 下，PATH 不走 shell 解析不出来。
+    /// Run `codex doctor` to get a fresh access token; it writes the result back to auth.json.
+    /// Uses a login shell because codex is often installed under fnm/nvm, which a plain
+    /// PATH lookup can't resolve.
     private func refreshToken() -> Bool {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -190,7 +194,7 @@ struct CodexProvider: UsageProvider {
         return proc.terminationStatus == 0
     }
 
-    /// 只落用得上的字段，不把整个响应（含 user_id 等）写进缓存。
+    /// Persist only the fields we use — not the whole response (user_id etc.).
     private func persist(_ json: [String: Any]) -> RefreshResult {
         var slim: [String: Any] = [
             "fetchedAt": Date().timeIntervalSince1970,
@@ -200,15 +204,16 @@ struct CodexProvider: UsageProvider {
 
         if let spend = json["spend_control"] as? [String: Any],
            let limit = spend["individual_limit"] as? [String: Any] {
-            // 这几个值是字符串形式的数字，得转。
+            // These values are numbers encoded as strings; convert.
             slim["spendUsed"] = (limit["used"] as? String).flatMap(Double.init)
             slim["spendLimit"] = (limit["limit"] as? String).flatMap(Double.init)
             slim["spendResetAt"] = limit["reset_at"] as? Double
         }
 
-        // 个人版（Plus/Pro）：primary / secondary 百分比窗口。
-        // 这条路径无法在 business 账号上实测，所以字段名和类型都兼容几种可能，
-        // 缺哪个就退化成不显示，绝不因为形状不对而整个崩掉。
+        // Personal (Plus/Pro): primary/secondary percentage windows.
+        // This path can't be tested from a business account, so field names and types
+        // tolerate several variants; anything missing degrades to not showing — never
+        // crash outright over an unexpected shape.
         if let rate = json["rate_limit"] as? [String: Any] {
             let windows: [[String: Any]] = ["primary", "secondary"].compactMap { key in
                 guard let w = rate[key] as? [String: Any],
@@ -217,7 +222,7 @@ struct CodexProvider: UsageProvider {
 
                 var entry: [String: Any] = ["name": Self.windowLabel(w, fallback: key),
                                             "percent": pct]
-                // reset 可能给绝对时间戳，也可能给"还剩多少秒"
+                // reset may be an absolute timestamp or "seconds remaining"
                 if let at = Self.number(w["reset_at"] ?? w["resets_at"]) {
                     entry["resetAt"] = at
                 } else if let after = Self.number(w["resets_in_seconds"] ?? w["reset_after_seconds"]) {

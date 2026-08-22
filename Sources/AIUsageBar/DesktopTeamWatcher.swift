@@ -1,23 +1,31 @@
 import Foundation
 
-/// 从 Claude Desktop 自己的 Local Storage 里实时拿「当前选中的 org」。
+/// Reads the "currently selected org" live from Claude Desktop's own Local Storage.
 ///
-/// 为什么需要它：`~/.claude.json` 的登录态要等 Desktop 内嵌的 Claude Code
-/// 重新同步才改写，切 team 后有几十秒级滞后。而 Desktop 是 claude.ai 的网页壳，
-/// 切 org 的瞬间就会把 org uuid 写进 localStorage 的 `lastOrganization`，
-/// 落到 Chromium leveldb 的当前 `.log` 文件（追加写、未压缩）。
+/// Why: the login state in `~/.claude.json` only rewrites once Desktop's embedded
+/// Claude Code re-syncs, lagging tens of seconds after a team switch. Desktop is a
+/// claude.ai web shell, so the moment you switch orgs it writes the org uuid into
+/// localStorage's `lastOrganization`, which lands in the current Chromium leveldb
+/// `.log` file (append-only, uncompressed).
 ///
-/// 这里刻意**不完整解析 leveldb**（表格式 + snappy，又重又脆，文件运行时还会轮转）：
-/// 只增量扫 `.log` 新追加的字节，正则抓「最后一次出现的 key + 紧跟的 uuid」当最新值。
-/// 历史值被压进 `.ldb` 后扫不到 —— 没关系，拿不到就保持沉默，
-/// 由外面的 `~/.claude.json` 慢通道兜底，不会比没有这层更差。
+/// Deliberately does **not** parse leveldb fully (table format + snappy — heavy,
+/// brittle, and the files rotate at runtime): it only incrementally scans newly
+/// appended bytes of the `.log` and regex-grabs "last occurrence of the key + the
+/// uuid right after it" as the latest value. Historical values compacted into `.ldb`
+/// are unreachable — fine: when nothing is found we stay silent and the slow
+/// `~/.claude.json` path outside covers it, so this layer never makes things worse.
 final class DesktopTeamWatcher {
 
-    /// 抓到新的 org uuid 时回调（主线程）。
+    /// Called (on the main thread) when a new org uuid is captured.
     private let onOrgChange: (String) -> Void
 
-    /// 最近一次从 leveldb 里抓到的 org uuid；还没抓到过为 nil。
+    /// Most recent org uuid grabbed from leveldb; nil until one is captured.
     private(set) var currentOrgUuid: String?
+
+    /// When this uuid hit disk (the .log's mtime). The follow logic compares it with
+    /// cswap's lastSwitchAt — a stale value scanned from history at startup must not
+    /// override a switch that just happened.
+    private(set) var currentOrgAt: Date?
 
     private let dirURL = AppHome.url
         .appendingPathComponent("Library/Application Support/Claude/Local Storage/leveldb")
@@ -25,7 +33,8 @@ final class DesktopTeamWatcher {
     private var dirWatcher: FileWatcher?
     private var logWatcher: FileWatcher?
     private var logPath: String?
-    /// 下次增量扫描的起点。留一小段重叠，防 key 恰好被读取边界劈开。
+    /// Start of the next incremental scan. Keep a small overlap so a key can't be
+    /// split across a read boundary.
     private var scanOffset: UInt64 = 0
     private static let overlap: UInt64 = 64
 
@@ -35,14 +44,16 @@ final class DesktopTeamWatcher {
 
     init(onOrgChange: @escaping (String) -> Void) {
         self.onOrgChange = onOrgChange
-        // Desktop 没装 / 目录不存在时 FileWatcher 自己会周期重试，这里不用特判。
+        // If Desktop isn't installed / the dir doesn't exist, FileWatcher retries
+        // periodically on its own — no special-casing needed here.
         dirWatcher = FileWatcher(path: dirURL.path) { [weak self] in
             self?.resolveLog()
         }
         resolveLog(initial: true)
     }
 
-    /// 找当前活跃的 `.log`（leveldb 会轮转文件名）。换了就从头扫，没换就增量扫。
+    /// Find the currently active `.log` (leveldb rotates file names). New file:
+    /// scan from the start; same file: scan incrementally.
     private func resolveLog(initial: Bool = false) {
         let fm = FileManager.default
         let logs = ((try? fm.contentsOfDirectory(at: dirURL, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
@@ -64,8 +75,8 @@ final class DesktopTeamWatcher {
         scan()
     }
 
-    /// 只读上次扫描点之后的新字节。leveldb 的 .log 是纯追加的，
-    /// 所以「文件里最后一次出现」就是「最新值」。
+    /// Read only the bytes appended since the last scan. leveldb's .log is
+    /// append-only, so "last occurrence in the file" equals "latest value".
     private func scan() {
         guard let logPath,
               let handle = FileHandle(forReadingAtPath: logPath) else { return }
@@ -73,7 +84,8 @@ final class DesktopTeamWatcher {
 
         let size = (try? handle.seekToEnd()) ?? 0
         guard size > scanOffset else {
-            // 变小了说明文件被换掉重建（正常轮转走 resolveLog，这里兜个底）。
+            // Shrunk: the file was replaced/recreated (normal rotation goes through
+            // resolveLog; this is a safety net).
             if size < scanOffset { scanOffset = 0 }
             return
         }
@@ -81,7 +93,7 @@ final class DesktopTeamWatcher {
         guard let data = try? handle.readToEnd(), !data.isEmpty else { return }
         scanOffset = size > Self.overlap ? size - Self.overlap : 0
 
-        // latin1 与字节一一对应，不会因为无效 UTF-8 丢内容。
+        // latin1 maps bytes 1:1, so invalid UTF-8 can't drop content.
         guard let text = String(data: data, encoding: .isoLatin1) else { return }
         let matches = Self.pattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
         guard let last = matches.last,
@@ -90,6 +102,7 @@ final class DesktopTeamWatcher {
         let uuid = String(text[range])
         guard uuid != currentOrgUuid else { return }
         currentOrgUuid = uuid
+        currentOrgAt = (try? FileManager.default.attributesOfItem(atPath: logPath))?[.modificationDate] as? Date ?? Date()
         onOrgChange(uuid)
     }
 }

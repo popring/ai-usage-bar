@@ -1,9 +1,11 @@
 import Foundation
 
-/// Claude Code 订阅额度（Pro / Max / Team 的 5 小时窗与 7 天窗）。
+/// Claude Code subscription quota (Pro / Max / Team 5-hour and 7-day windows).
 ///
-/// 读：解析各配置目录的 `.claude.json` + 本应用直连缓存，谁新用谁。
-/// 刷新：Keychain 取 token 直连 usage 端点；token 过期起一次无头 CLI 续命再重试（见 Refresher）。
+/// Read: parse each config dir's `.claude.json` + this app's direct-fetch cache;
+/// whichever is newer wins.
+/// Refresh: pull the token from the Keychain and hit the usage endpoint directly;
+/// on token expiry, run one headless CLI to renew it and retry (see Refresher).
 struct ClaudeCodeProvider: UsageProvider {
     let id = "claude-code"
     let displayName = "Claude Code"

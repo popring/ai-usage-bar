@@ -1,34 +1,38 @@
 import CryptoKit
 import Foundation
 
-/// 直连 Anthropic 的 usage 端点刷新某个配置目录的额度。
+/// Refreshes a config directory's quota by hitting Anthropic's usage endpoint directly.
 ///
-/// 主路径：
-///   1. 从 Keychain 读该目录的 OAuth access token（只读，不写回）
-///   2. `GET api.anthropic.com/api/oauth/usage`（Claude Code 自己也走这个口）
-///   3. 结果落到本应用自己的缓存 —— **不回写 `.claude.json`**，那是 Claude Code
-///      的活状态文件，读改写有竞态，丢数据的锅背不起。
+/// Main path:
+///   1. Read the directory's OAuth access token from Keychain (read-only, never written back)
+///   2. `GET api.anthropic.com/api/oauth/usage` (the same endpoint Claude Code itself uses)
+///   3. Store the result in this app's own cache — **never write back to `.claude.json`**,
+///      which is Claude Code's live state file; a read-modify-write race there could lose
+///      data we can't afford to be blamed for.
 ///
-/// 续命兜底：access token 只活 8 小时，我们不自己做 refresh-token 轮换（和 CLI
-/// 抢写 Keychain 会打架）。token 过期时起一次无头 `claude -p "/usage"`，CLI 会用
-/// refreshToken 换新 token 写回 Keychain，我们再重试直连。无头 /usage 在 CLI
-/// 2.1.228（2026-08-12）空转过、2.1.232 已恢复；它再坏也只是这个目录退回
-/// 「需要重新登录」，不影响直连主路径。
+/// Renewal fallback: access tokens only live 8 hours, and we don't rotate refresh tokens
+/// ourselves (we'd fight the CLI over Keychain writes). On expiry, run a headless
+/// `claude -p "/usage"` once — the CLI exchanges the refreshToken for a new token and
+/// writes it to Keychain, then we retry the direct call. Headless /usage was a no-op in
+/// CLI 2.1.228 (2026-08-12), fixed in 2.1.232; if it breaks again, only this directory
+/// falls back to "needs re-login" — the direct main path is unaffected.
 enum Refresher {
 
-    /// 刷新节流（UI 层用）。端点每次都返回实时数据，这只是别打太勤。
+    /// Refresh throttle (for the UI layer). The endpoint always returns live data; this
+    /// only avoids hammering it.
     static let refreshWindow: TimeInterval = 5 * 60
 
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
-    /// 多个 team 串行打端点、隔一点距离，别给限流留话柄。
-    /// （2026-08-13 实测的"并发只活一个"其实是另外三个 token 过期 —— 这个端点
-    /// 对过期 OAuth token 回的是 429 rate_limit_error，不是 401，别被骗了。）
+    /// Serialize endpoint calls across teams with a small gap, giving rate limiting no excuse.
+    /// (The 2026-08-13 "only one survives concurrency" observation was actually three
+    /// expired tokens — this endpoint returns 429 rate_limit_error for expired OAuth
+    /// tokens, not 401. Don't be fooled.)
     private static let gate = NSLock()
     private static var lastRequestAt = Date.distantPast
     private static let requestSpacing: TimeInterval = 2
 
-    /// 刷新一个目录。**同步阻塞**，调用方自己放到后台队列。
+    /// Refresh one directory. **Blocks synchronously** — callers must dispatch to a background queue.
     static func refresh(_ configDir: URL, timeout: TimeInterval = 25) -> RefreshResult {
         gate.lock()
         defer { gate.unlock() }
@@ -48,8 +52,9 @@ enum Refresher {
 
         var reply = hitUsageEndpoint(token, timeout: timeout)
 
-        // 实测这个端点对过期 OAuth token 回 429 rate_limit_error（不是 401），别被骗了。
-        // 真限流也长这样，但托盘的频率不至于——按过期处理：起一次 CLI 续命后重试一次。
+        // Observed: this endpoint returns 429 rate_limit_error (not 401) for expired OAuth
+        // tokens. Real rate limiting looks the same, but our polling rate makes that
+        // unlikely — treat it as expiry: run the CLI once to renew, then retry once.
         if reply.error == nil, reply.status == 401 || reply.status == 429 {
             if reauthViaCLI(configDir), case .ok(let fresh) = readAccessToken(configDir) {
                 reply = hitUsageEndpoint(fresh, timeout: timeout)
@@ -64,7 +69,7 @@ enum Refresher {
             return .needsLogin(L("登录已过期（429）", "login expired (429)"))
         }
         guard reply.status == 200 else {
-            // 排查形状变化全靠响应体，截一段带出来。
+            // The response body is the only clue when the shape changes; carry a snippet out.
             let body = reply.payload.flatMap { String(data: $0, encoding: .utf8) }?
                 .prefix(120) ?? ""
             return .failed("HTTP \(reply.status) \(body)")
@@ -72,8 +77,8 @@ enum Refresher {
         guard let payload = reply.payload,
               let util = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
         else { return .failed(L("返回不是 JSON", "response is not JSON")) }
-        // 响应结构 = `.claude.json` 里 cachedUsageUtilization.utilization。
-        // 一个额度字段都没有说明接口形状变了，别把垃圾当数据存下去。
+        // Response shape = cachedUsageUtilization.utilization in `.claude.json`.
+        // No quota fields at all means the API shape changed — don't cache garbage as data.
         guard util["limits"] != nil || util["five_hour"] != nil || util["seven_day"] != nil
         else {
             return .failed(L("返回缺额度字段（接口变了？）",
@@ -120,18 +125,20 @@ enum Refresher {
         return (status, payload, transportError)
     }
 
-    /// token 过期时的续命兜底：起无头 CLI，它会用 refreshToken 换新 access token
-    /// 写回 Keychain（它自己写的凭证，不弹授权框）。只关心 token 被续上，不读输出。
+    /// Renewal fallback for an expired token: run the headless CLI, which exchanges the
+    /// refreshToken for a new access token and writes it to Keychain (its own credential,
+    /// so no authorization prompt). We only care that the token gets renewed; output is ignored.
     private static func reauthViaCLI(_ configDir: URL, timeout: TimeInterval = 90) -> Bool {
         var env = ProcessInfo.processInfo.environment
-        // 坑：默认目录必须 **不设** CLAUDE_CONFIG_DIR。显式设成 ~/.claude 会让
-        // Claude Code 去 ~/.claude/.claude.json 找状态，那是另一个（空的）位置。
+        // Gotcha: for the default directory CLAUDE_CONFIG_DIR must be **unset**. Setting it
+        // explicitly to ~/.claude makes Claude Code look for state in ~/.claude/.claude.json,
+        // which is a different (empty) location.
         if configDir.lastPathComponent == ".claude" {
             env.removeValue(forKey: "CLAUDE_CONFIG_DIR")
         } else {
             env["CLAUDE_CONFIG_DIR"] = configDir.path
         }
-        // GUI 程序继承到的 PATH 很短，claude 一般装在 ~/.local/bin。
+        // GUI apps inherit a short PATH; claude is usually installed in ~/.local/bin.
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:"
             + (env["PATH"] ?? "/usr/bin:/bin")
@@ -145,7 +152,7 @@ enum Refresher {
         proc.standardError = Pipe()
         do { try proc.run() } catch { return false }
 
-        // 超时看门狗：到点仍在跑就杀掉，别把后台刷新任务永远挂住。
+        // Watchdog: kill it if still running at the deadline, so a background refresh never hangs forever.
         let deadline = Date().addingTimeInterval(timeout)
         while proc.isRunning && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.2)
@@ -154,7 +161,7 @@ enum Refresher {
         return proc.terminationStatus == 0
     }
 
-    /// 本应用自己缓存的最近一次直连结果。没刷过 / 读不出来为 nil。
+    /// This app's cached result of the last direct fetch; nil if never fetched or unreadable.
     static func cached(_ configDir: URL) -> (fetchedAt: Date, utilization: [String: Any])? {
         guard let data = try? Data(contentsOf: cacheFile(configDir)),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -172,9 +179,9 @@ enum Refresher {
 
     // MARK: - Keychain
 
-    /// Claude Code 存 token 的 Keychain service 名（binary 里 `KJ()` 的逻辑）：
-    /// 默认目录是 `Claude Code-credentials`；自定义 CLAUDE_CONFIG_DIR 追加
-    /// `-<sha256(路径 NFC 规范化)的前 8 位 hex>`。
+    /// The Keychain service name Claude Code stores tokens under (the `KJ()` logic in its
+    /// binary): the default directory uses `Claude Code-credentials`; a custom
+    /// CLAUDE_CONFIG_DIR appends `-<first 8 hex chars of sha256(NFC-normalized path)>`.
     static func keychainService(for configDir: URL) -> String {
         let base = "Claude Code-credentials"
         guard configDir.lastPathComponent != ".claude" else { return base }
@@ -186,14 +193,15 @@ enum Refresher {
 
     private enum TokenResult {
         case ok(String)
-        /// Keychain 里压根没有这份凭证 —— 走「重新登录」引导。
+        /// No such credential in Keychain at all — route to the "log in again" guidance.
         case missing(String)
         case fail(String)
     }
 
-    /// 走 `/usr/bin/security` 读，不走进程内 Security.framework —— Claude Code 自己
-    /// 就是用 `security` 写入的，创建者 = 读取者，不会弹「想访问你的钥匙串」授权框；
-    /// 换成 framework 调用则每次 token 轮换都要重新授权一次。
+    /// Read via `/usr/bin/security`, not the in-process Security.framework — Claude Code
+    /// writes the item with `security`, so creator == reader and no "wants to access your
+    /// keychain" prompt appears; a framework call would require re-authorization on every
+    /// token rotation.
     private static func readAccessToken(_ configDir: URL) -> TokenResult {
         let service = keychainService(for: configDir)
         let user = ProcessInfo.processInfo.environment["USER"] ?? NSUserName()
