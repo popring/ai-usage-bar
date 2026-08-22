@@ -52,8 +52,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         defaultDirWatcher = FileWatcher(path: state.path) { [weak self] in
             self?.desktopSignalChanged()
         }
-        // Third signal: cswap updates autoswitch_state.json when switching slots.
-        swapStateWatcher = FileWatcher(path: ClaudeSwapProvider.autoswitchStateFile.path) { [weak self] in
+        // Third signal: cswap rewrites sequence.json on every slot switch.
+        swapStateWatcher = FileWatcher(path: ClaudeSwapProvider.liveStateFile.path) { [weak self] in
             self?.desktopSignalChanged()
         }
     }

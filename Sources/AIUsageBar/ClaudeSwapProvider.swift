@@ -108,28 +108,45 @@ struct ClaudeSwapProvider: UsageProvider {
         return windows
     }
 
-    /// cswap's switch-state file. Exposed because the follow logic needs to watch it
-    /// and compare its timestamp.
-    static var autoswitchStateFile: URL { root.appendingPathComponent("autoswitch_state.json") }
+    /// cswap's live-state file: `activeAccountNumber` here is rewritten by **every**
+    /// switch, manual or automatic. Exposed because the follow logic watches it.
+    ///
+    /// Do not use `autoswitch_state.json` for this — it only records the automatic
+    /// at-limit rotation. Read alone it goes stale the moment you `cswap switch` by hand,
+    /// and the menu bar then follows a slot you left hours ago.
+    static var liveStateFile: URL { root.appendingPathComponent("sequence.json") }
 
-    /// When the last switch happened; compared against Desktop's org-switch signal
-    /// to decide which is newer.
-    static var lastSwitchAt: Date? {
-        guard let data = try? Data(contentsOf: autoswitchStateFile),
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let ts = json["lastSwitchAt"] as? Double else { return nil }
-        return Date(timeIntervalSince1970: ts)
+    private static var autoswitchStateFile: URL {
+        root.appendingPathComponent("autoswitch_state.json")
     }
 
-    /// The slot claude-swap is currently on (autoswitch_state.json's lastSwitchTo;
-    /// new versions write a string, the old field was a number — accept both).
+    /// When the active slot last changed; compared against Desktop's org-switch signal
+    /// to decide which is newer. Either file can be the more recent record of a switch
+    /// (only auto rotations touch autoswitch_state), so take the later of the two.
+    static var lastSwitchAt: Date? {
+        let fromSequence = (json(liveStateFile)?["lastUpdated"] as? String).flatMap(parseDate)
+        let fromAutoswitch = (json(autoswitchStateFile)?["lastSwitchAt"] as? Double)
+            .map { Date(timeIntervalSince1970: $0) }
+        return [fromSequence, fromAutoswitch].compactMap { $0 }.max()
+    }
+
+    /// The slot claude-swap is currently on. Slot numbers are ints in the JSON but
+    /// strings as account IDs here; older layouts had no sequence.json, so keep the
+    /// autoswitch record as a fallback.
     private static func liveSlot() -> String? {
-        guard let data = try? Data(contentsOf: autoswitchStateFile),
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        else { return nil }
-        if let s = json["lastSwitchTo"] as? String { return s }
-        if let n = json["lastSwitchTo"] as? Int { return String(n) }
+        if let active = json(liveStateFile)?["activeAccountNumber"] {
+            if let n = active as? Int { return String(n) }
+            if let s = active as? String { return s }
+        }
+        guard let fallback = json(autoswitchStateFile)?["lastSwitchTo"] else { return nil }
+        if let s = fallback as? String { return s }
+        if let n = fallback as? Int { return String(n) }
         return nil
+    }
+
+    private static func json(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     /// Org display info from the config backups, keyed by organizationUuid.
