@@ -63,8 +63,10 @@ func runDump(refresh: Bool) -> Never {
                          w.displayName, Fmt.until(w.resetsAt)))
         }
         if let e = account.extraUsage {
-            print(String(format: "    额外额度 $%.2f / $%.2f%@",
-                         e.used, e.limit, e.hasBuffer ? "" : "（无兜底）"))
+            let amounts = e.isCredits
+                ? String(format: "%g / %g credits", e.used, e.limit)
+                : String(format: "$%.2f / $%.2f", e.used, e.limit)
+            print("    额外额度 \(amounts)\(e.hasBuffer ? "" : "（无兜底）")")
         }
         print("")
     }

@@ -312,7 +312,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         // 标题行。有兜底额度就顺带挂在后面，省一行。
         var title = account.org ?? account.label
         if let extra = account.extraUsage, extra.hasBuffer {
-            title += String(format: "   $%.2f / $%.0f", extra.used, extra.limit)
+            title += extra.isCredits
+                ? String(format: "   %g / %g credits", extra.used, extra.limit)
+                : String(format: "   $%.2f / $%.0f", extra.used, extra.limit)
         }
         // 点账号名 = 固定/取消固定到菜单栏（✓ 标在固定的那个上，– 标在跟随目标上）。
         let header = NSMenuItem(title: title, action: #selector(pinClicked(_:)),

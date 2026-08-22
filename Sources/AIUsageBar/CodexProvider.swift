@@ -9,7 +9,7 @@ import Foundation
 ///
 /// 计划类型决定了额度长在哪：
 ///   - 个人版（Plus/Pro）：`rate_limit` 里的 primary/secondary 百分比窗口
-///   - **business / team：`spend_control.individual_limit` 的美元额度**，
+///   - **business / team：`spend_control.individual_limit` 的 credits 额度（不是美元）**，
 ///     `rate_limit` 和 `credits` 都是空的
 /// 本地 session rollout 文件只记了 `rate_limits`，所以在 business 计划下看着像没数据，
 /// 其实是记错了地方 —— 必须打这个接口才拿得到。
@@ -49,11 +49,12 @@ struct CodexProvider: UsageProvider {
         account.seatTier = plan
         account.fetchedAt = (root["fetchedAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
 
-        // business / team：美元额度
+        // business / team：credits 额度
         if let used = root["spendUsed"] as? Double, let limit = root["spendLimit"] as? Double,
            limit > 0 {
             account.extraUsage = ExtraUsage(usedMinor: Int((used * 100).rounded()),
-                                            limitMinor: Int((limit * 100).rounded()))
+                                            limitMinor: Int((limit * 100).rounded()),
+                                            isCredits: true)
             account.windows = [LimitWindow(
                 kind: "budget",
                 label: "",          // 留空，显示成「预算」；带 label 会变成「X 预算」

@@ -35,8 +35,10 @@ struct LimitWindow {
 
 /// 额外用量额度（撞到限额之后的 credits 兜底）。
 struct ExtraUsage {
-    let usedMinor: Int      // 分
-    let limitMinor: Int     // 分，0 表示没有兜底
+    let usedMinor: Int      // 最小单位 ×100（美元→分；credits→百分之一 credit）
+    let limitMinor: Int     // 同上，0 表示没有兜底
+    /// Codex business 的 spend_control 单位是 credits，不是美元；显示时不带 $。
+    var isCredits: Bool = false
     var used: Double { Double(usedMinor) / 100 }
     var limit: Double { Double(limitMinor) / 100 }
     var hasBuffer: Bool { limitMinor > 0 }
