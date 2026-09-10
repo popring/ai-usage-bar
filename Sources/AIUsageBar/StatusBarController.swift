@@ -165,7 +165,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if let swapAt = ClaudeSwapProvider.lastSwitchAt,
            swapAt > (desktopTeamWatcher?.currentOrgAt ?? .distantPast),
            let live = accounts.first(where: { $0.isLiveSwapSlot }),
-           let hit = visibleAccounts.first(where: { $0.key == live.key || $0.sameOrg(as: live) }) {
+           let hit = visibleAccounts.first(where: { $0.key == live.key })
+               ?? visibleAccounts.first(where: { $0.sameOrg(as: live) }) {
             return hit
         }
         if let uuid = desktopTeamWatcher?.currentOrgUuid,

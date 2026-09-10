@@ -26,8 +26,15 @@ struct ClaudeSwapProvider: UsageProvider {
 
         let liveSlot = Self.liveSlot()
         let profiles = Self.configProfiles()
+        // `cswap remove` drops a slot from sequence.json but leaves its usage.json entry
+        // behind. Such a ghost shares an org with the slot that replaced it and sits
+        // earlier in slot order, so same-org lookups (follow, dedupe) land on it: a dead
+        // row with an old error, and a frozen "data Nd ago". Trust sequence.json's roster.
+        let known: Set<String>? = (Self.json(Self.liveStateFile)?["accounts"] as? [String: Any])
+            .map { Set($0.keys) }
 
         return slots.keys
+            .filter { known?.contains($0) ?? true }
             .sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
             .compactMap { slot in
                 guard let raw = slots[slot] else { return nil }
