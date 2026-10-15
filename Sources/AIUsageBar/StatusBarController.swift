@@ -289,10 +289,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // Data age as one global line — accounts refresh together, no need to repeat per group.
-        if let oldest = shown.compactMap(\.cacheAge).max() {
-            let stale = shown.contains { $0.isStale }
-            menu.addItem(info(L("数据 ", "Data ") + Fmt.ago(oldest) + (stale ? L(" · 已过期", " · stale") : ""),
-                              size: 11, color: stale ? .systemOrange : .tertiaryLabelColor))
+        // A stale account (usually one whose refresh keeps failing) is named instead of
+        // dragging the age of every freshly refreshed account down with it.
+        let stale = shown.filter(\.isStale)
+        let fresh = shown.filter { !$0.isStale }
+        if let age = (fresh.isEmpty ? shown : fresh).compactMap(\.cacheAge).max() {
+            var text = L("数据 ", "Data ") + Fmt.ago(age)
+            if !stale.isEmpty {
+                let names = stale.map { $0.org ?? $0.label }.joined(separator: ", ")
+                text += fresh.isEmpty ? L(" · 已过期", " · stale") : L(" · \(names) 已过期", " · \(names) stale")
+            }
+            menu.addItem(info(text, size: 11, color: stale.isEmpty ? .tertiaryLabelColor : .systemOrange))
         }
         let refreshItem = NSMenuItem(
             title: isRefreshing ? L("刷新中…", "Refreshing…") : L("立即刷新", "Refresh Now"),
