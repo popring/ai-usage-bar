@@ -14,6 +14,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var defaultDirWatcher: FileWatcher?
     private var desktopTeamWatcher: DesktopTeamWatcher?
     private var swapStateWatcher: FileWatcher?
+    /// config.json edited by hand or by an AI agent applies without touching the menu.
+    private var configWatcher: FileWatcher?
     /// Last follow target, to distinguish an actual team switch from routine state-file writes.
     private var lastFollowTargetKey: String?
 
@@ -36,6 +38,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         refresh()
         restartTimer()
         watchDesktopTeam()
+        configWatcher = FileWatcher(path: Settings.path.path) { [weak self] in
+            self?.reloadConfigClicked()
+        }
     }
 
     /// Two signals track which team Desktop is currently on:
@@ -507,6 +512,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     /// Config changes apply without restart: provider toggles, poll interval, and menu bar prefix take effect immediately.
+    /// Also fired by the config.json watcher, so the menu item is only a manual fallback.
     @objc private func reloadConfigClicked() {
         Settings.reload()
         applyConfigChange()

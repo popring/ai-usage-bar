@@ -141,7 +141,7 @@ struct Settings {
         let zh = Locale.preferredLanguages.first?.hasPrefix("zh") ?? false
         let template = zh ? """
         {
-          "_说明": "改完重启 AI Usage Bar 生效。删掉某个来源的 enabled 或设为 false 即可隐藏它。language: auto=跟随系统, zh, en。",
+          "_说明": "保存即生效，不用重启。删掉某个来源的 enabled 或设为 false 即可隐藏它。language: auto=跟随系统, zh, en。",
           "pollMinutes": 20,
           "menuBarPrefix": "AI",
           "language": "auto",
@@ -170,7 +170,7 @@ struct Settings {
 
         """ : """
         {
-          "_note": "Restart AI Usage Bar after editing. Set a provider's enabled to false (or delete it) to hide it. language: auto = follow system, zh, en.",
+          "_note": "Changes apply on save, no restart needed. Set a provider's enabled to false (or delete it) to hide it. language: auto = follow system, zh, en.",
           "pollMinutes": 20,
           "menuBarPrefix": "AI",
           "language": "auto",

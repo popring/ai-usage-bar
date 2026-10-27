@@ -40,7 +40,7 @@ Launch at login: System Settings → General → Login Items.
 
 Menu → **Settings…** (⌘,) opens the panel: source toggles, LiteLLM gateway URL and API key, poll interval, menu bar prefix, UI language, and **one-click Add Claude Team**. Changes apply immediately, no restart.
 
-Behind the panel sits `~/.config/ai-usage-bar/config.json` (respects `XDG_CONFIG_HOME`; auto-generated on first run with `0600` permissions). Hand-editing works too — hit **Reload Config** (⌘L) afterwards:
+Behind the panel sits `~/.config/ai-usage-bar/config.json` (respects `XDG_CONFIG_HOME`; auto-generated on first run with `0600` permissions). Hand-editing works too — **changes apply on save** (the file is watched; nothing to click):
 
 ```json
 {
@@ -57,6 +57,18 @@ Behind the panel sits `~/.config/ai-usage-bar/config.json` (respects `XDG_CONFIG
 ```
 
 Set `enabled` to `false` to hide a source entirely (it won't even be refreshed). `language` accepts `auto` (follow system) / `zh` / `en`. `pollMinutes` has a floor of 5 — see "Two design trade-offs" below.
+
+### Let an AI configure it
+
+The config is one JSON file that applies on save, so hand the job to Claude Code / Codex or any agent. Send it this along with what you want:
+
+```
+AI Usage Bar's config lives at ~/.config/ai-usage-bar/config.json (respects XDG_CONFIG_HOME); fields are in the README's "Configuration" section.
+Edit the file directly; it applies automatically, no restart. Verify with: "/Applications/AI Usage Bar.app/Contents/MacOS/AIUsageBar" --dump
+I want: <e.g. disable Codex, enable LiteLLM at https://…, key from env LITELLM_API_KEY, poll every 10 minutes>
+```
+
+`--dump` runs without UI and only reads local state, so the agent can check its own work.
 
 ## How each source works
 

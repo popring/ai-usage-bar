@@ -40,7 +40,7 @@
 
 菜单 → **设置…**（⌘,）打开配置面板：来源开关、LiteLLM 网关地址与 API Key、轮询间隔、菜单栏前缀、界面语言，以及**一键添加 Claude team**。保存立刻生效，不用重启。
 
-面板背后就是 `~/.config/ai-usage-bar/config.json`（尊重 `XDG_CONFIG_HOME`；首次运行自动生成，权限 `0600`），喜欢手改 JSON 依然可以，改完点 **重新加载配置**（⌘L）生效：
+面板背后就是 `~/.config/ai-usage-bar/config.json`（尊重 `XDG_CONFIG_HOME`；首次运行自动生成，权限 `0600`），喜欢手改 JSON 依然可以，**保存即生效**（文件有监听，不用点任何东西）：
 
 ```json
 {
@@ -57,6 +57,18 @@
 ```
 
 不想看的来源把 `enabled` 改成 `false`，那一组会整个消失（连刷新都不会跑）。`language` 支持 `auto`（跟随系统）/ `zh` / `en`。`pollMinutes` 下限 5 分钟 —— 原因见下方「两个设计取舍」。
+
+### 让 AI 帮你配置
+
+配置就是一个 JSON 文件，保存即生效，所以把活交给 Claude Code / Codex 这类 agent 就行。把下面这段连同你的需求一起发给它：
+
+```
+AI Usage Bar 的配置文件在 ~/.config/ai-usage-bar/config.json（尊重 XDG_CONFIG_HOME），字段见本 README「配置」节；
+直接改文件，改完自动生效，不用重启；跑 "/Applications/AI Usage Bar.app/Contents/MacOS/AIUsageBar" --dump 核对结果。
+我要：<例：关掉 Codex，打开 LiteLLM，网关地址 https://…，key 在环境变量 LITELLM_API_KEY，轮询 10 分钟>
+```
+
+`--dump` 不起 UI、只读本地，agent 自己就能验证改对没有。
 
 ## 各来源怎么工作
 
